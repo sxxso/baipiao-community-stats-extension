@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title">
+  <title>白嫖社区个人统计</title>
+  <rect width="128" height="128" rx="24" fill="#17201d"/>
+  <path d="M28 84h16V54H28v30Zm28 0h16V34H56v50Zm28 0h16V44H84v40Z" fill="#dff5ee"/>
+  <path d="M27 94h74" stroke="#25b79b" stroke-width="8" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,10 @@
+{
+  "name": "baipiao-community-stats-extension",
+  "private": true,
+  "version": "0.1.0",
+  "type": "commonjs",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check lib/data-adapter.js && node --check lib/storage.js && node --check content.js && node --check background.js && node --check popup.js"
+  }
+}

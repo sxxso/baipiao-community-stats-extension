@@ -1,0 +1,22 @@
+{
+  "manifest_version": 3,
+  "name": "白嫖社区个人统计",
+  "version": "0.1.0",
+  "description": "查看白嫖社区当前登录账号的个人资料、互动统计和最近活动。",
+  "permissions": ["storage", "tabs", "scripting"],
+  "host_permissions": ["https://baipiao.org/bbs/*"],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "打开白嫖社区个人统计",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://baipiao.org/bbs/*"],
+      "js": ["lib/data-adapter.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

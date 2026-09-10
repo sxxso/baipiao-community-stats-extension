@@ -1,0 +1,11 @@
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  min-width: 360px;
+  max-width: 400px;
+  min-height: 240px;
+}
