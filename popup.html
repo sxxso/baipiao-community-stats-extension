@@ -7,8 +7,103 @@
     <link rel="stylesheet" href="popup.css">
   </head>
   <body>
-    <main id="app" aria-busy="true">
-      <p>正在读取社区数据…</p>
+    <main id="app" class="app" aria-busy="true">
+      <header class="topbar">
+        <div class="brand">
+          <img class="brand-mark" src="icons/icon.svg" alt="">
+          <div>
+            <p class="eyebrow">白嫖社区</p>
+            <h1>个人数据</h1>
+          </div>
+        </div>
+        <button
+          id="refreshButton"
+          class="icon-button"
+          type="button"
+          title="刷新数据"
+          aria-label="刷新数据"
+        >↻</button>
+      </header>
+
+      <div id="statePanel" class="state-panel" role="status" aria-live="polite" hidden>
+        <span class="state-mark" aria-hidden="true"></span>
+        <div>
+          <strong id="stateTitle">正在读取</strong>
+          <p id="stateMessage">正在读取社区数据…</p>
+        </div>
+      </div>
+
+      <section id="profileSection" class="profile-section" aria-labelledby="profileHeading">
+        <div class="avatar-wrap">
+          <img id="avatar" class="avatar" alt="" hidden>
+          <span id="avatarFallback" class="avatar-fallback" aria-hidden="true">?</span>
+        </div>
+        <div class="profile-copy">
+          <div class="identity-row">
+            <div>
+              <h2 id="profileHeading"><span id="displayName">—</span></h2>
+              <p id="handle" class="handle">@—</p>
+            </div>
+            <button id="openProfileButton" class="text-button" type="button" disabled>
+              查看主页 <span aria-hidden="true">↗</span>
+            </button>
+          </div>
+          <div class="profile-meta">
+            <span id="trustLabel" class="pill">信任等级 —</span>
+            <span>加入 <time id="joinedAt">—</time></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="content-section stats-section" aria-labelledby="statsHeading">
+        <div class="section-heading">
+          <h2 id="statsHeading">社区轨迹</h2>
+          <span id="updatedAt" class="updated-at">—</span>
+        </div>
+        <div id="statsGrid" class="stats-grid">
+          <div class="stat-cell">
+            <strong id="topicsValue">—</strong>
+            <span>主题</span>
+          </div>
+          <div class="stat-cell">
+            <strong id="repliesValue">—</strong>
+            <span>回复</span>
+          </div>
+          <div class="stat-cell">
+            <strong id="receivedValue">—</strong>
+            <span>获赞</span>
+          </div>
+          <div class="stat-cell">
+            <strong id="givenValue">—</strong>
+            <span>送赞</span>
+          </div>
+        </div>
+      </section>
+
+      <section id="trendSection" class="content-section trend-section" aria-labelledby="trendHeading">
+        <div class="section-heading">
+          <h2 id="trendHeading">近 7 天活跃</h2>
+          <span class="section-note">按活动记录</span>
+        </div>
+        <div id="trendBars" class="trend-bars" aria-label="近七天活动数量"></div>
+        <p id="trendEmpty" class="empty-note" hidden>暂无可用趋势数据</p>
+      </section>
+
+      <section class="content-section activity-section" aria-labelledby="activityHeading">
+        <div class="section-heading">
+          <h2 id="activityHeading">最近活动</h2>
+          <span class="section-note">最多 5 条</span>
+        </div>
+        <ol id="activityList" class="activity-list"></ol>
+        <p id="activityEmpty" class="empty-note" hidden>暂无活动记录</p>
+      </section>
+
+      <footer class="footer">
+        <button id="openCommunityButton" class="footer-link" type="button">
+          打开社区 <span aria-hidden="true">↗</span>
+        </button>
+        <span class="privacy-note">只读取当前登录会话</span>
+      </footer>
     </main>
     <script src="popup.js"></script>
   </body>

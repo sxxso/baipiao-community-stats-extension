@@ -125,3 +125,22 @@ test("exposes null profile fields instead of invented defaults", () => {
   assert.equal(profile.profileUrl, "https://baipiao.org/bbs/u/demo");
   assert.equal(stats.views, null);
 });
+
+test("supports Baipiao Connect-style profile aliases", () => {
+  const result = normalizePayload({
+    preferred_username: "connect-demo",
+    name: "Connect Demo",
+    picture: "/bbs/assets/avatars/connect-demo.png",
+    profile: "/bbs/u/connect-demo",
+    trust_level: 2,
+    created_at: "2026-06-20T08:12:30Z",
+    post_count: 18,
+    discussion_count: 3,
+  });
+
+  assert.equal(result.profile.username, "connect-demo");
+  assert.equal(result.profile.avatarUrl, "https://baipiao.org/bbs/assets/avatars/connect-demo.png");
+  assert.equal(result.profile.profileUrl, "https://baipiao.org/bbs/u/connect-demo");
+  assert.equal(result.stats.topics, 3);
+  assert.equal(result.stats.replies, 15);
+});

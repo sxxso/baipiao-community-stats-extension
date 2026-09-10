@@ -158,7 +158,14 @@
       candidates.find(
         (candidate) =>
           isObject(candidate) &&
-          text(firstValue(candidate.username, candidate.user_name, candidate.handle)),
+          text(
+            firstValue(
+              candidate.username,
+              candidate.preferred_username,
+              candidate.user_name,
+              candidate.handle,
+            ),
+          ),
       ) || null
     );
   }
@@ -329,6 +336,7 @@
     const username = text(
       firstValue(
         sessionUser && sessionUser.username,
+        sessionUser && sessionUser.preferred_username,
         sessionUser && sessionUser.user_name,
         domPayload.user && domPayload.user.username,
       ),

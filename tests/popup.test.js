@@ -1,0 +1,45 @@
+const test = require("node:test");
+const assert = require("node:assert/strict");
+const {
+  ERROR_COPY,
+  formatCount,
+  formatDate,
+  formatRelative,
+  isSafeCommunityUrl,
+} = require("../popup");
+
+test("formats counts without inventing unavailable values", () => {
+  assert.equal(formatCount(null), "—");
+  assert.equal(formatCount(undefined), "—");
+  assert.equal(formatCount(1234), "1,234");
+  assert.equal(formatCount("17"), "17");
+});
+
+test("formats dates and relative activity labels", () => {
+  assert.equal(formatDate(null), "—");
+  assert.equal(formatDate("2026-01-02T03:04:05Z"), "2026/01/02");
+  assert.equal(
+    formatRelative("2026-09-10T11:59:30Z", new Date("2026-09-10T12:00:00Z")),
+    "刚刚",
+  );
+  assert.equal(
+    formatRelative("2026-09-10T11:00:00Z", new Date("2026-09-10T12:00:00Z")),
+    "1 小时前",
+  );
+});
+
+test("keeps open actions inside the Baipiao community", () => {
+  assert.equal(isSafeCommunityUrl("https://baipiao.org/bbs/u/demo"), true);
+  assert.equal(isSafeCommunityUrl("https://baipiao.org/bbs/d/42-topic"), true);
+  assert.equal(isSafeCommunityUrl("https://baipiao.org/free/api"), false);
+  assert.equal(isSafeCommunityUrl("https://example.com/bbs/u/demo"), false);
+});
+
+test("provides actionable copy for known failure states", () => {
+  assert.deepEqual(ERROR_COPY.not_logged_in, [
+    "请先登录白嫖社区",
+    "打开社区并完成登录后再刷新。",
+  ]);
+  assert.equal(ERROR_COPY.timeout[0], "读取超时");
+  assert.equal(ERROR_COPY.unknown[0], "暂时无法读取");
+});

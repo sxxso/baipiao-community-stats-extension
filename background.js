@@ -101,27 +101,6 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       }
     }
 
-    async function waitForTabReady(tabId, timeoutMs = 3000) {
-      const updated = chromeApi.tabs.onUpdated;
-      if (!updated || typeof updated.addListener !== "function") return;
-      await new Promise((resolve) => {
-        let settled = false;
-        const finish = () => {
-          if (settled) return;
-          settled = true;
-          if (typeof updated.removeListener === "function") {
-            updated.removeListener(listener);
-          }
-          resolve();
-        };
-        const listener = (id, changeInfo) => {
-          if (id === tabId && changeInfo && changeInfo.status === "complete") finish();
-        };
-        updated.addListener(listener);
-        setTimeout(finish, timeoutMs);
-      });
-    }
-
     async function getOrCreateCommunityTab() {
       const existing = await findCommunityTab();
       if (existing) return existing;
@@ -129,9 +108,6 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
         const created = await promiseCall(chromeApi.tabs.create.bind(chromeApi.tabs), [
           { url: COMMUNITY_URL, active: false },
         ]);
-        if (created && created.id !== undefined) {
-          await waitForTabReady(created.id);
-        }
         return created || null;
       } catch {
         return null;
@@ -142,19 +118,30 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       if (tabId === undefined || typeof chromeApi.tabs.sendMessage !== "function") {
         return { ok: false, code: "collector_failed", message: "暂时无法读取社区数据" };
       }
-      const pending = promiseCall(chromeApi.tabs.sendMessage.bind(chromeApi.tabs), [
-        tabId,
-        message,
-      ]).catch(() => ({
-        ok: false,
-        code: "collector_failed",
-        message: "暂时无法读取社区数据",
-      }));
-      return withTimeout(pending, timeoutMs, {
+      const deadline = Date.now() + timeoutMs;
+      while (Date.now() < deadline) {
+        const remaining = deadline - Date.now();
+        const attempt = promiseCall(chromeApi.tabs.sendMessage.bind(chromeApi.tabs), [
+          tabId,
+          message,
+          undefined,
+        ]).catch(() => ({
+          ok: false,
+          code: "collector_failed",
+          message: "暂时无法读取社区数据",
+        }));
+        const response = await withTimeout(attempt, Math.min(350, remaining), {
+          ok: false,
+          code: "retry",
+        });
+        if (response && response.code !== "retry") return response;
+        await new Promise((resolve) => setTimeout(resolve, Math.min(120, remaining)));
+      }
+      return {
         ok: false,
         code: "timeout",
         message: "读取社区数据超时",
-      });
+      };
     }
 
     async function readCache() {
