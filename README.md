@@ -4,6 +4,16 @@
 
 资金记录会在白嫖社区页面右下角显示为一个小窗口：可以刷新、收起和重新展开，也可以打开网站的完整资金记录页面。插件只做读取，不执行发帖、回复、点赞、收藏、私信、转账或其他会改变社区状态的操作。
 
+## 下载
+
+在 GitHub Release 页面按浏览器选择对应压缩包：
+
+- [下载 Edge 版](https://github.com/sxxso/baipiao-community-stats-extension/releases/latest/download/baipiao-community-stats-extension-edge.zip)
+- [下载 Chrome 版](https://github.com/sxxso/baipiao-community-stats-extension/releases/latest/download/baipiao-community-stats-extension-chrome.zip)
+- [查看所有版本和源代码](https://github.com/sxxso/baipiao-community-stats-extension/releases)
+
+Edge 版和 Chrome 版使用相同的 Manifest V3 插件代码，只是下载文件名分开标注，方便用户选择。Release 压缩包是纯净的插件目录，解压后第一层即可看到 `manifest.json`，不需要再进入仓库源码外层目录。
+
 ## 安全性与隐私
 
 请在安装前阅读本节。这个插件会读取你当前登录账号在白嫖社区页面中已经可以看到的个人信息和资金信息，因此建议只从可信来源下载，并核对扩展权限。
@@ -66,11 +76,11 @@
 
 ### 从 GitHub 下载
 
-1. 在 GitHub 仓库页面点击 `Code`，选择 `Download ZIP`。
+1. 在本 README 顶部选择 Edge 版或 Chrome 版下载；推荐使用 Release 附件，不要下载错误的项目外层目录。
 2. 将 ZIP 解压到一个固定目录。不要直接在压缩包内加载插件。
-3. 进入解压后的目录，找到**第一层直接包含 `manifest.json` 的文件夹**。
+3. 确认解压后的目录第一层直接包含 `manifest.json`。
 
-GitHub 自动下载的 ZIP 通常会多包一层仓库目录，因此不要误选最外层目录。Edge 或 Chrome 的加载目录必须满足：打开该目录后能直接看到 `manifest.json`、`background.js`、`content.js` 和 `popup.html`。
+如果使用 GitHub 仓库页面的 `Code` → `Download ZIP`，GitHub 自动下载的源码包通常会多包一层仓库目录；请继续进入内层，直到打开目录后能直接看到 `manifest.json`、`background.js`、`content.js` 和 `popup.html`。Release 附件没有这一层目录。
 
 ### Edge
 
