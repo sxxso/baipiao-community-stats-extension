@@ -349,3 +349,74 @@ test("loads the signed-in user's Flarum profile page when the current tab is the
     global.DOMParser = originalDomParser;
   }
 });
+
+test("loads profile activities when the current tab is another community page", async () => {
+  const originalDocument = global.document;
+  const originalLocation = global.location;
+  const originalFetch = global.fetch;
+  const originalDomParser = global.DOMParser;
+  const profileActivityGroup = {
+    querySelector: () => ({
+      getAttribute: () => "/bbs/d/552-demo/1",
+      textContent: "Demo topic",
+    }),
+    nextElementSibling: {
+      classList: { contains: (name) => name === "Post--by-start-user" },
+      querySelector: (selector) =>
+        selector === "time[datetime]"
+          ? { getAttribute: () => "2026-09-10T01:00:00Z" }
+          : { textContent: "发布 #1" },
+    },
+  };
+  const profileDocument = {
+    getElementById: () => ({ textContent: JSON.stringify(flarumPayload) }),
+    querySelectorAll: (selector) =>
+      selector === ".PostsUserPage-discussion" ? [profileActivityGroup] : [],
+  };
+  const pageHeaderUserLink = {
+    getAttribute: () => "/bbs/u/cjamrklll",
+  };
+  global.document = {
+    getElementById: () => ({
+      textContent: JSON.stringify({
+        resources: [
+          {
+            type: "forums",
+            id: "1",
+            attributes: {
+              bpMyLevel: -1,
+              bpLevelNames: ["白嫖入门", "白嫖高手", "白嫖大师"],
+            },
+          },
+        ],
+        session: { userId: 191 },
+      }),
+    }),
+    querySelector: (selector) =>
+      selector === "header a[href*='/bbs/u/']" ? pageHeaderUserLink : null,
+    querySelectorAll: () => [],
+  };
+  global.location = { pathname: "/bbs/d/552-demo/1" };
+  global.fetch = async (path) => {
+    assert.equal(path, "/bbs/u/cjamrklll");
+    return { ok: true, text: async () => "<html>profile</html>" };
+  };
+  global.DOMParser = class {
+    parseFromString() {
+      return profileDocument;
+    }
+  };
+
+  try {
+    const result = await collectCommunityStats();
+    assert.equal(result.ok, true);
+    assert.equal(result.data.profile.username, "cjamrklll");
+    assert.equal(result.data.activity.length, 1);
+    assert.equal(result.data.activity[0].title, "Demo topic");
+  } finally {
+    global.document = originalDocument;
+    global.location = originalLocation;
+    global.fetch = originalFetch;
+    global.DOMParser = originalDomParser;
+  }
+});

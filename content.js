@@ -573,7 +573,7 @@
 
   async function collectCommunityStats() {
     const bootstrap = readFlarumPayload(root.document);
-    if (bootstrap && !bootstrap.user) {
+    if (bootstrap && !bootstrap.user && !detectHeaderUser()) {
       return {
         ok: false,
         code: "not_logged_in",

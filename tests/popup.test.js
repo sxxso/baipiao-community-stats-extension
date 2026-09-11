@@ -8,6 +8,8 @@ const {
   formatDate,
   formatRelative,
   isSafeCommunityUrl,
+  load,
+  state,
 } = require("../popup");
 
 test("formats counts without inventing unavailable values", () => {
@@ -53,4 +55,45 @@ test("provides actionable copy for known failure states", () => {
   ]);
   assert.equal(ERROR_COPY.timeout[0], "读取超时");
   assert.equal(ERROR_COPY.unknown[0], "暂时无法读取");
+});
+
+test("opening the popup reads cache without refreshing remote data", async () => {
+  const originalChrome = global.chrome;
+  const requests = [];
+  const cached = {
+    profile: { username: "demo" },
+    stats: { money: 13 },
+    activity: [],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "dom",
+  };
+  global.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message.type);
+        callback(message.type === "GET_CACHED_STATS" ? { ok: true, data: cached } : { ok: true });
+      },
+    },
+  };
+  state.data = null;
+  state.cached = false;
+  state.error = "";
+  state.status = "loading";
+  state.requesting = false;
+
+  try {
+    await load();
+    assert.deepEqual(requests, ["GET_CACHED_STATS"]);
+    assert.equal(state.data.profile.username, "demo");
+    assert.equal(state.cached, true);
+    assert.equal(state.requesting, false);
+  } finally {
+    global.chrome = originalChrome;
+    state.data = null;
+    state.cached = false;
+    state.error = "";
+    state.status = "loading";
+    state.requesting = false;
+  }
 });

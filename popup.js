@@ -11,6 +11,7 @@
 
   const COMMUNITY_URL = "https://baipiao.org/bbs/";
   const ERROR_COPY = {
+    idle: ["等待刷新", "点击右上角刷新按钮读取最新数据。"],
     not_logged_in: ["请先登录白嫖社区", "打开社区并完成登录后再刷新。"],
     timeout: ["读取超时", "社区响应较慢，请稍后重试。"],
     collector_failed: ["暂时无法读取", "请确认当前页面仍可访问白嫖社区。"],
@@ -21,7 +22,7 @@
     unknown: ["暂时无法读取", "请稍后重试。"],
   };
   const state = {
-    status: "loading",
+    status: "idle",
     data: null,
     cached: false,
     error: "",
@@ -126,10 +127,15 @@
     app.setAttribute("aria-busy", state.requesting ? "true" : "false");
     if (!visible) return;
 
-    let title = "正在读取";
-    let message = "正在读取社区数据…";
+    let title = "等待刷新";
+    let message = state.data
+      ? "当前显示的是本地缓存，点击刷新读取最新数据。"
+      : "点击右上角刷新按钮读取最新数据。";
     let tone = "loading";
-    if (state.status === "refreshing") {
+    if (state.status === "loading") {
+      title = "正在读取";
+      message = "正在读取社区数据…";
+    } else if (state.status === "refreshing") {
       title = "正在更新";
       message = "正在读取最新的个人数据…";
     } else if (state.error) {
@@ -344,7 +350,6 @@
       state.status = "success";
       render();
     }
-    await refresh();
   }
 
   return {
