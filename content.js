@@ -81,6 +81,128 @@
     }
   }
 
+  function parseFlarumJson(value) {
+    if (!value) return null;
+    try {
+      const payload = typeof value === "string" ? JSON.parse(value) : value;
+      return isObject(payload) ? payload : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function resourcesFrom(payload) {
+    return Array.isArray(payload && payload.resources) ? payload.resources : [];
+  }
+
+  function chooseFlarumUser(payload) {
+    const resources = resourcesFrom(payload);
+    const sessionUserId = payload && payload.session && payload.session.userId;
+    if (sessionUserId === undefined || sessionUserId === null || sessionUserId === "") return null;
+    const expectedId = String(sessionUserId);
+    return resources.find(
+      (resource) =>
+        resource &&
+        resource.type === "users" &&
+        String(resource.id) === expectedId,
+    ) || null;
+  }
+
+  function chooseFlarumForum(payload) {
+    return resourcesFrom(payload).find((resource) => resource && resource.type === "forums") || null;
+  }
+
+  function flarumLevelLabel(level, levelNames) {
+    const numericLevel = Number(level);
+    if (!Number.isFinite(numericLevel)) return null;
+    if (numericLevel < 0) return "白嫖预备";
+    return text(Array.isArray(levelNames) ? levelNames[numericLevel] : "") || `白嫖等级 ${numericLevel + 1}`;
+  }
+
+  function parseFlarumPayload(value) {
+    const payload = parseFlarumJson(value);
+    const userResource = payload ? chooseFlarumUser(payload) : null;
+    const forumResource = payload ? chooseFlarumForum(payload) : null;
+    const attrs = isObject(userResource && userResource.attributes)
+      ? userResource.attributes
+      : {};
+    const username = text(firstValue(attrs.username, attrs.slug));
+    const user = username
+      ? {
+          username,
+          displayName: firstValue(attrs.displayName, attrs.username),
+          avatarUrl: attrs.avatarUrl,
+          joinTime: attrs.joinTime,
+          lastSeenAt: attrs.lastSeenAt,
+          titleBadge: isObject(attrs.titleBadge) ? { name: attrs.titleBadge.name } : null,
+          profileUrl: `/bbs/u/${encodeURIComponent(username)}`,
+        }
+      : null;
+    const summary = {
+      discussionCount: attrs.discussionCount,
+      commentCount: attrs.commentCount,
+      money: attrs.money,
+      uploads: attrs["fof-upload-uploadCountAll"],
+      communityLevel: forumResource && forumResource.attributes && forumResource.attributes.bpMyLevel,
+      levelLabel: flarumLevelLabel(
+        forumResource && forumResource.attributes && forumResource.attributes.bpMyLevel,
+        forumResource && forumResource.attributes && forumResource.attributes.bpLevelNames,
+      ),
+    };
+    return { user, summary, activities: [] };
+  }
+
+  function readFlarumPayload(documentRef = root.document) {
+    const node = documentRef && typeof documentRef.getElementById === "function"
+      ? documentRef.getElementById("flarum-json-payload")
+      : null;
+    return node ? parseFlarumPayload(node.textContent) : null;
+  }
+
+  function parseFlarumDocument(documentRef = root.document) {
+    const payload = readFlarumPayload(documentRef);
+    const activities = extractFlarumActivityRecords(documentRef);
+    const moneyHistory = extractFlarumMoneyHistory(documentRef);
+    return payload || activities.length || moneyHistory.length
+      ? mergePayloads(payload, { activities, moneyHistory })
+      : null;
+  }
+
+  function parseHtmlDocument(html) {
+    if (!html || typeof root.DOMParser !== "function") return null;
+    try {
+      return new root.DOMParser().parseFromString(html, "text/html");
+    } catch {
+      return null;
+    }
+  }
+
+  async function requestHtml(path, timeoutMs = 5000) {
+    if (!isCommunityPath(path) || typeof root.fetch !== "function") return null;
+    const url = new URL(path, ORIGIN);
+    const controller = typeof root.AbortController === "function" ? new root.AbortController() : null;
+    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
+    try {
+      const response = await root.fetch(`${url.pathname}${url.search}`, {
+        credentials: "include",
+        headers: { Accept: "text/html" },
+        ...(controller ? { signal: controller.signal } : {}),
+      });
+      return response.ok ? await response.text() : null;
+    } catch {
+      return null;
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+
+  async function fetchFlarumProfilePayload(username) {
+    const encoded = encodeURIComponent(text(username));
+    if (!encoded) return null;
+    const html = await requestHtml(`/bbs/u/${encoded}`, 5000);
+    return html ? parseFlarumDocument(parseHtmlDocument(html)) : null;
+  }
+
   function normalizeDomActivity(records) {
     const prepared = (Array.isArray(records) ? records : []).map((record) => {
       const item = isObject(record) ? record : {};
@@ -102,6 +224,114 @@
     return typeof adapter.normalizeActivity === "function"
       ? adapter.normalizeActivity(prepared, ORIGIN)
       : [];
+  }
+
+  function discussionPostUrl(href, postNumber) {
+    const raw = text(href);
+    if (!raw) return null;
+    let url;
+    try {
+      url = new URL(raw, ORIGIN);
+    } catch {
+      return null;
+    }
+    if (url.protocol !== "https:" || url.hostname !== "baipiao.org") return null;
+    if (!url.pathname.startsWith(`${BBS_PREFIX}/d/`)) return null;
+    const number = Number(postNumber);
+    if (Number.isFinite(number) && number > 0) {
+      const parts = url.pathname.split("/").filter(Boolean);
+      const last = parts[parts.length - 1];
+      if (!/^\d+$/.test(last)) {
+        url.pathname = `${url.pathname.replace(/\/+$/, "")}/${number}`;
+      }
+    }
+    return `${url.pathname}${url.search}`;
+  }
+
+  function extractPostNumber(article) {
+    const meta = article && typeof article.querySelector === "function"
+      ? article.querySelector(".PostMeta-number")
+      : null;
+    const match = text(meta && meta.textContent).match(/#(\d+)/);
+    return match ? Number(match[1]) : null;
+  }
+
+  function extractFlarumActivityRecords(documentRef = root.document) {
+    if (!documentRef || typeof documentRef.querySelectorAll !== "function") return [];
+    return Array.from(documentRef.querySelectorAll(".PostsUserPage-discussion"))
+      .map((group) => {
+        const discussionLink = group.querySelector && group.querySelector("a[href*='/bbs/d/']");
+        const article = group.nextElementSibling;
+        if (!discussionLink || !article) return null;
+        const postNumber = extractPostNumber(article);
+        const timeElement = article.querySelector && article.querySelector("time[datetime]");
+        const isStartUser = Boolean(
+          article.classList &&
+            typeof article.classList.contains === "function" &&
+            article.classList.contains("Post--by-start-user"),
+        );
+        return {
+          type: isStartUser && postNumber === 1 ? "topic" : "reply",
+          title: text(discussionLink.textContent),
+          url: discussionPostUrl(discussionLink.getAttribute("href"), postNumber),
+          timestamp: timeElement ? timeElement.getAttribute("datetime") : null,
+          category: null,
+        };
+      })
+      .filter((record) => record && record.title && record.url);
+  }
+
+  function extractFlarumMoneyHistory(documentRef = root.document) {
+    if (!documentRef || typeof documentRef.querySelectorAll !== "function") return [];
+    return Array.from(documentRef.querySelectorAll(".transferHistoryContainer"))
+      .map((container) => {
+        const raw = text(
+          firstValue(
+            container.textContent,
+            Array.from(container.children || [])
+              .map((child) => child && child.textContent)
+              .filter(Boolean)
+              .join(" "),
+          ),
+        );
+        const type = (raw.match(/类型\s*:\s*([^|]+?)(?=\s*\|\s*时间\s*:)/) || [])[1];
+        const timestamp = (raw.match(/时间\s*:\s*([^|]+?)(?=\s*ID\s*:)/) || [])[1];
+        const id = (raw.match(/ID\s*:\s*(\d+)/) || [])[1];
+        const operatorNode =
+          container.querySelector && container.querySelector(".moneyHistoryUser .username");
+        const operator = operatorNode
+          ? text(operatorNode.textContent)
+          : (raw.match(/操作人\s*:\s*([^|]+?)(?=\s*\|\s*金额\s*:)/) || [])[1];
+        const amount = (raw.match(/金额\s*:\s*(-?\d+(?:\.\d+)?)/) || [])[1];
+        const balance = raw.match(
+          /余额变动\s*:\s*(-?\d+(?:\.\d+)?)\s*→\s*(-?\d+(?:\.\d+)?)/,
+        );
+        const purpose = (raw.match(/资金用途\s*:\s*(.+)$/) || [])[1];
+        if (!type || !timestamp || !id || !amount || !balance || !purpose) return null;
+        return {
+          type: text(type),
+          timestamp: text(timestamp),
+          id: Number(id),
+          operator: text(operator),
+          amount: Number(amount),
+          balanceBefore: Number(balance[1]),
+          balanceAfter: Number(balance[2]),
+          purpose: text(purpose),
+        };
+      })
+      .filter(Boolean);
+  }
+
+  async function collectMoneyHistory(options = {}) {
+    const waitMs = Math.max(0, Number(options.waitMs) || 0);
+    const pollMs = Math.max(25, Number(options.pollMs) || 150);
+    const deadline = Date.now() + waitMs;
+    let data = extractFlarumMoneyHistory(root.document);
+    while (!data.length && Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, deadline - Date.now())));
+      data = extractFlarumMoneyHistory(root.document);
+    }
+    return { ok: true, data };
   }
 
   async function requestJson(path, timeoutMs = 1800) {
@@ -285,6 +515,17 @@
         : null,
       activities: [],
     };
+
+    const flarumPayload = readFlarumPayload(root.document);
+    if (flarumPayload) {
+      return mergePayloads({
+        user: payload.user,
+      }, flarumPayload, {
+        activities: extractFlarumActivityRecords(root.document),
+        moneyHistory: extractFlarumMoneyHistory(root.document),
+      });
+    }
+
     if (!username || !pathUser) return payload;
 
     const links = Array.from(root.document.querySelectorAll("a[href]")).filter((link) => {
@@ -318,19 +559,49 @@
   }
 
   function mergePayloads(...payloads) {
-    const result = { user: {}, summary: {}, activities: [], trend: null };
+    const result = { user: {}, summary: {}, activities: [], moneyHistory: [], trend: null };
     for (const payload of payloads) {
       if (!isObject(payload)) continue;
       if (isObject(payload.user)) Object.assign(result.user, payload.user);
       if (isObject(payload.summary)) Object.assign(result.summary, payload.summary);
       if (Array.isArray(payload.activities)) result.activities.push(...payload.activities);
+      if (Array.isArray(payload.moneyHistory)) result.moneyHistory.push(...payload.moneyHistory);
       if (Array.isArray(payload.trend)) result.trend = payload.trend;
     }
     return result;
   }
 
   async function collectCommunityStats() {
-    const domPayload = collectDomFallback();
+    const bootstrap = readFlarumPayload(root.document);
+    if (bootstrap && !bootstrap.user) {
+      return {
+        ok: false,
+        code: "not_logged_in",
+        message: "请先登录白嫖社区",
+      };
+    }
+    let domPayload = collectDomFallback();
+    if (domPayload.user && domPayload.user.username) {
+      const profilePromise = domPayload.activities.length
+        ? Promise.resolve(null)
+        : fetchFlarumProfilePayload(domPayload.user.username);
+      const profilePayload = await profilePromise;
+      if (profilePayload) domPayload = mergePayloads(domPayload, profilePayload);
+    }
+    if (domPayload.user && domPayload.user.username) {
+      const data =
+        typeof adapter.normalizePayload === "function"
+          ? adapter.normalizePayload(domPayload, domPayload.activities.length ? "mixed" : "api")
+          : null;
+      if (data && data.profile && data.profile.username) {
+        return {
+          ok: true,
+          data,
+          fetchedAt: data.fetchedAt,
+        };
+      }
+    }
+
     const session = await firstJson(ENDPOINTS.session);
     const sessionUser = session ? findUser(session.body) : null;
     const username = text(
@@ -394,7 +665,15 @@
 
   function installMessageListener() {
     if (!root.chrome || !root.chrome.runtime || !root.chrome.runtime.onMessage) return;
+    if (root.__baipiaoCollectorInstalled) return;
+    root.__baipiaoCollectorInstalled = true;
     root.chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+      if (message && message.type === "GET_BAIPIAO_MONEY_HISTORY") {
+        collectMoneyHistory({ waitMs: message.waitMs })
+          .then(sendResponse)
+          .catch(() => sendResponse({ ok: false, data: [] }));
+        return true;
+      }
       if (!message || message.type !== "GET_BAIPIAO_STATS") return undefined;
       collectCommunityStats()
         .then(sendResponse)
@@ -412,11 +691,15 @@
   return {
     ENDPOINTS,
     collectCommunityStats,
+    collectMoneyHistory,
     collectDomFallback,
+    extractFlarumActivityRecords,
+    extractFlarumMoneyHistory,
     extractUserFromPath,
     installMessageListener,
     isCommunityPath,
     normalizeDomActivity,
+    parseFlarumPayload,
     requestJson,
   };
 });

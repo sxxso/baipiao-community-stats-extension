@@ -153,12 +153,14 @@
     setText("handle", username ? `@${username}` : "未登录");
     setText(
       "trustLabel",
-      profile.trustLabel
+      profile.title
+        ? `称号 · ${profile.title}`
+        : profile.trustLabel
         ? profile.trustLevel === null || profile.trustLevel === undefined
           ? profile.trustLabel
           : `${profile.trustLabel} · ${profile.trustLevel}`
         : profile.trustLevel === null || profile.trustLevel === undefined
-          ? "信任等级 —"
+          ? "称号 —"
           : `信任等级 ${profile.trustLevel}`,
     );
     setText("joinedAt", formatDate(profile.joinedAt));
@@ -186,14 +188,15 @@
       profileButton.disabled = !profileUrl;
       profileButton.dataset.url = profileUrl;
     }
+
   }
 
   function renderStats(data) {
     const stats = (data && data.stats) || {};
     setText("topicsValue", formatCount(stats.topics));
     setText("repliesValue", formatCount(stats.replies));
-    setText("receivedValue", formatCount(stats.likesReceived));
-    setText("givenValue", formatCount(stats.likesGiven));
+    setText("moneyValue", formatCount(stats.money));
+    setText("levelValue", text(stats.levelLabel) || "—");
     setText("updatedAt", data && data.fetchedAt ? `更新于 ${formatRelative(data.fetchedAt)}` : "—");
   }
 

@@ -8,11 +8,16 @@ function makeChrome(overrides = {}) {
       query: async () => [],
       create: async (options) => ({ id: 99, ...options }),
       sendMessage: async () => ({ ok: true }),
+      remove: async () => undefined,
       ...overrides.tabs,
     },
     runtime: {
       onMessage: { addListener() {} },
       ...overrides.runtime,
+    },
+    scripting: {
+      executeScript: async () => undefined,
+      ...overrides.scripting,
     },
   };
 }
@@ -72,4 +77,223 @@ test("returns cached data when a content request times out", async () => {
   assert.equal(result.ok, false);
   assert.equal(result.code, "timeout");
   assert.equal(result.cached.profile.username, "demo");
+});
+
+test("waits for one slow content response without starting duplicate collectors", async () => {
+  let sendCount = 0;
+  const data = {
+    profile: { username: "demo" },
+    stats: {},
+    activity: [],
+    moneyHistory: [{ id: 1 }],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => {
+        sendCount += 1;
+        await new Promise((resolve) => setTimeout(resolve, 400));
+        return { ok: true, data };
+      },
+    },
+  });
+  const bridge = createBackground({ chrome, storage: null });
+
+  const result = await bridge.handleMessage(
+    { type: "GET_STATS" },
+    { timeoutMs: 600 },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(sendCount, 1);
+});
+
+test("injects the collector once when an existing tab has no content script", async () => {
+  let sendCount = 0;
+  let injectionCount = 0;
+  const data = {
+    profile: { username: "demo" },
+    stats: {},
+    activity: [],
+    moneyHistory: [{ id: 1 }],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => {
+        sendCount += 1;
+        if (sendCount === 1) return undefined;
+        return { ok: true, data };
+      },
+    },
+    scripting: {
+      executeScript: async () => {
+        injectionCount += 1;
+      },
+    },
+  });
+  const bridge = createBackground({ chrome, storage: null });
+
+  const result = await bridge.handleMessage(
+    { type: "GET_STATS" },
+    { timeoutMs: 500 },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(sendCount, 2);
+  assert.equal(injectionCount, 1);
+});
+
+test("enriches a profile snapshot with dynamic finance history from a temporary page", async () => {
+  let statsMessageCount = 0;
+  let removedTabId = null;
+  let historyMessage = null;
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 13, communityLevel: -1, levelLabel: "白嫖预备" },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async (query) =>
+        query.url ? [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }] : [],
+      create: async (options) => ({ id: options.url.includes("money/history") ? 88 : 99, ...options }),
+      sendMessage: async (tabId, message) => {
+        if (message.type === "GET_BAIPIAO_STATS") {
+          statsMessageCount += 1;
+          return { ok: true, data };
+        }
+        historyMessage = message;
+        return {
+          ok: true,
+          data: [
+            {
+              type: "奖励",
+              timestamp: "2026-09-10 10:00:00",
+              id: 950,
+              operator: "admin",
+              amount: 10,
+              balanceBefore: 4,
+              balanceAfter: 14,
+              purpose: "活动奖励",
+            },
+          ],
+        };
+      },
+      remove: async (tabId) => {
+        removedTabId = tabId;
+      },
+    },
+  });
+  const bridge = createBackground({ chrome, storage: null });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.equal(statsMessageCount, 1);
+  assert.equal(historyMessage.waitMs, 6000);
+  assert.equal(result.data.moneyHistory.length, 1);
+  assert.equal(removedTabId, 88);
+});
+
+test("keeps enriched finance history in both the returned and cached snapshot", async () => {
+  let savedSnapshot = null;
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 796, communityLevel: -1, levelLabel: "白嫖预备" },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const history = {
+    type: "奖励",
+    timestamp: "2026-09-10 10:00:00",
+    id: 950,
+    operator: "admin",
+    amount: 10,
+    balanceBefore: 4,
+    balanceAfter: 14,
+    purpose: "活动奖励",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async (query) =>
+        query.url ? [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }] : [],
+      create: async (options) => ({ id: options.url.includes("money/history") ? 88 : 99, ...options }),
+      sendMessage: async (tabId, message) =>
+        message.type === "GET_BAIPIAO_STATS"
+          ? { ok: true, data }
+          : { ok: true, data: [history] },
+      remove: async () => undefined,
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => null,
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.data.moneyHistory.length, 1);
+  assert.equal(savedSnapshot.moneyHistory.length, 1);
+});
+
+test("serves an in-page widget request from the sender tab", async () => {
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 796, communityLevel: -1, levelLabel: "白嫖预备" },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      sendMessage: async (tabId, message) =>
+        message.type === "GET_BAIPIAO_STATS"
+          ? { ok: true, data }
+          : {
+              ok: true,
+              data: [
+                {
+                  type: "奖励",
+                  timestamp: "2026-09-10 10:00:00",
+                  id: 950,
+                  operator: "admin",
+                  amount: 10,
+                  balanceBefore: 4,
+                  balanceAfter: 14,
+                  purpose: "活动奖励",
+                },
+              ],
+            },
+      remove: async () => undefined,
+    },
+  });
+  const bridge = createBackground({ chrome, storage: null });
+
+  const result = await bridge.handleMessage(
+    { type: "GET_WIDGET_STATS" },
+    { senderTabId: 7, timeoutMs: 500 },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.moneyHistory.length, 1);
 });

@@ -331,6 +331,11 @@ h2 {
   white-space: nowrap;
 }
 
+.level-stat strong {
+  font-size: 13px;
+  line-height: 1.35;
+}
+
 .stat-cell span {
   display: block;
   margin-top: 5px;

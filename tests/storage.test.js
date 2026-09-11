@@ -11,8 +11,21 @@ test("cache strips credential-like and raw-response fields", async () => {
 
   await storage.saveSnapshot({
     profile: { username: "demo", password: "bad-data" },
-    stats: { topics: 2, authorization: "bad-data" },
+    stats: { topics: 2, money: 13, communityLevel: -1, levelLabel: "白嫖预备", authorization: "bad-data" },
     activity: [],
+    moneyHistory: [
+      {
+        type: "奖励",
+        timestamp: "2026-09-10 10:00:00",
+        id: 950,
+        operator: "admin",
+        amount: 792,
+        balanceBefore: 4,
+        balanceAfter: 796,
+        purpose: "活动奖励",
+        raw: "discard",
+      },
+    ],
     trend: [],
     fetchedAt: "2026-09-10T00:00:00Z",
     raw: "<html>bad-data</html>",
@@ -21,6 +34,11 @@ test("cache strips credential-like and raw-response fields", async () => {
 
   const saved = await storage.loadSnapshot();
   assert.equal(saved.profile.username, "demo");
+  assert.equal(saved.stats.money, 13);
+  assert.equal(saved.stats.communityLevel, -1);
+  assert.equal(saved.stats.levelLabel, "白嫖预备");
+  assert.equal(saved.moneyHistory.length, 1);
+  assert.equal("raw" in saved.moneyHistory[0], false);
   assert.equal("password" in saved.profile, false);
   assert.equal("authorization" in saved.stats, false);
   assert.equal("raw" in saved, false);

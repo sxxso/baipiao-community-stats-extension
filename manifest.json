@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "白嫖社区个人统计",
-  "version": "0.1.0",
-  "description": "查看白嫖社区当前登录账号的个人资料、互动统计和最近活动。",
+  "version": "0.2.0",
+  "description": "查看白嫖社区当前登录账号的个人资料、社区统计和资金记录。",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": ["https://baipiao.org/bbs/*"],
   "background": {
@@ -15,7 +15,8 @@
   "content_scripts": [
     {
       "matches": ["https://baipiao.org/bbs/*"],
-      "js": ["lib/data-adapter.js", "content.js"],
+      "css": ["widget.css"],
+      "js": ["lib/data-adapter.js", "content.js", "widget.js"],
       "run_at": "document_idle"
     }
   ]

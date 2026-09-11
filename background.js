@@ -21,6 +21,10 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
   const BBS_PREFIX = "/bbs";
   const COMMUNITY_URL = `${ORIGIN}/bbs/`;
   const TAB_PATTERN = `${ORIGIN}/bbs/*`;
+  const DEFAULT_REQUEST_TIMEOUT_MS = 10000;
+  const TAB_READY_TIMEOUT_MS = 5000;
+  const MONEY_HISTORY_WAIT_MS = 6000;
+  const MONEY_HISTORY_TIMEOUT_MS = 7000;
 
   function text(value) {
     return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
@@ -103,44 +107,186 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
 
     async function getOrCreateCommunityTab() {
       const existing = await findCommunityTab();
-      if (existing) return existing;
+      if (existing) {
+        await waitForTabReady(existing);
+        return existing;
+      }
       try {
         const created = await promiseCall(chromeApi.tabs.create.bind(chromeApi.tabs), [
           { url: COMMUNITY_URL, active: false },
         ]);
+        if (created) await waitForTabReady(created);
         return created || null;
       } catch {
         return null;
       }
     }
 
-    async function requestFromContentScript(tabId, message, timeoutMs = 3000) {
+    async function waitForTabReady(tab, timeoutMs = TAB_READY_TIMEOUT_MS) {
+      if (!tab || tab.status === "complete") return true;
+      const updated = chromeApi.tabs.onUpdated;
+      if (!updated || typeof updated.addListener !== "function") return true;
+      return new Promise((resolve) => {
+        let settled = false;
+        const timer = setTimeout(() => finish(true), timeoutMs);
+        const finish = (value) => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (typeof updated.removeListener === "function") {
+            updated.removeListener(listener);
+          }
+          resolve(value);
+        };
+        const listener = (id, changeInfo) => {
+          if (id === tab.id && changeInfo && changeInfo.status === "complete") finish(true);
+        };
+        updated.addListener(listener);
+      });
+    }
+
+    async function requestFromContentScript(tabId, message, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
       if (tabId === undefined || typeof chromeApi.tabs.sendMessage !== "function") {
         return { ok: false, code: "collector_failed", message: "暂时无法读取社区数据" };
       }
-      const deadline = Date.now() + timeoutMs;
-      while (Date.now() < deadline) {
-        const remaining = deadline - Date.now();
-        const attempt = promiseCall(chromeApi.tabs.sendMessage.bind(chromeApi.tabs), [
-          tabId,
-          message,
-          undefined,
-        ]).catch(() => ({
+      const pending = promiseCall(chromeApi.tabs.sendMessage.bind(chromeApi.tabs), [
+        tabId,
+        message,
+        undefined,
+      ])
+        .then(
+          (response) =>
+            response || {
+              ok: false,
+              code: "content_unavailable",
+              message: "暂时无法读取社区数据",
+            },
+        )
+        .catch(() => ({
           ok: false,
-          code: "collector_failed",
+          code: "content_unavailable",
           message: "暂时无法读取社区数据",
         }));
-        const response = await withTimeout(attempt, Math.min(350, remaining), {
-          ok: false,
-          code: "retry",
-        });
-        if (response && response.code !== "retry") return response;
-        await new Promise((resolve) => setTimeout(resolve, Math.min(120, remaining)));
-      }
-      return {
+      return withTimeout(pending, timeoutMs, {
         ok: false,
         code: "timeout",
         message: "读取社区数据超时",
+      });
+    }
+
+    async function injectCollector(tabId) {
+      if (tabId === undefined || !chromeApi.scripting || typeof chromeApi.scripting.executeScript !== "function") {
+        return false;
+      }
+      try {
+        await promiseCall(chromeApi.scripting.executeScript.bind(chromeApi.scripting), [
+          {
+            target: { tabId },
+            files: ["lib/data-adapter.js", "content.js"],
+          },
+        ]);
+        return true;
+      } catch {
+        return false;
+      }
+    }
+
+    async function collectMoneyHistory(username) {
+      const value = text(username);
+      if (!value || typeof chromeApi.tabs.remove !== "function") return [];
+      let tab = null;
+      try {
+        tab = await promiseCall(chromeApi.tabs.create.bind(chromeApi.tabs), [
+          {
+            url: `${COMMUNITY_URL}u/${encodeURIComponent(value)}/money/history`,
+            active: false,
+          },
+        ]);
+        if (!tab || tab.id === undefined) return [];
+        await waitForTabReady(tab);
+        let response = await requestFromContentScript(
+          tab.id,
+          { type: "GET_BAIPIAO_MONEY_HISTORY", waitMs: MONEY_HISTORY_WAIT_MS },
+          MONEY_HISTORY_TIMEOUT_MS,
+        );
+        if (response && response.code === "content_unavailable" && (await injectCollector(tab.id))) {
+          response = await requestFromContentScript(
+            tab.id,
+            { type: "GET_BAIPIAO_MONEY_HISTORY", waitMs: MONEY_HISTORY_WAIT_MS },
+            MONEY_HISTORY_TIMEOUT_MS,
+          );
+        }
+        return response && response.ok && Array.isArray(response.data) ? response.data : [];
+      } catch {
+        return [];
+      } finally {
+        if (tab && tab.id !== undefined) {
+          try {
+            await promiseCall(chromeApi.tabs.remove.bind(chromeApi.tabs), [tab.id]);
+          } catch {
+            // A temporary tab is best-effort cleanup and does not affect the snapshot.
+          }
+        }
+      }
+    }
+
+    async function collectStatsFromTab(tab, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+      let response = tab
+        ? await requestFromContentScript(tab.id, { type: "GET_BAIPIAO_STATS" }, timeoutMs)
+        : { ok: false, code: "no_tab", message: "无法打开社区页面" };
+      if (tab && response && response.code === "content_unavailable") {
+        if (await injectCollector(tab.id)) {
+          response = await requestFromContentScript(
+            tab.id,
+            { type: "GET_BAIPIAO_STATS" },
+            timeoutMs,
+          );
+        } else {
+          response = {
+            ok: false,
+            code: "collector_failed",
+            message: "暂时无法读取社区数据",
+          };
+        }
+      }
+      if (response && response.code === "content_unavailable") {
+        response = {
+          ok: false,
+          code: "collector_failed",
+          message: "暂时无法读取社区数据",
+        };
+      }
+      if (response && response.ok && response.data) {
+        let data = response.data;
+        if (
+          data.profile &&
+          data.profile.username &&
+          (!Array.isArray(data.moneyHistory) || !data.moneyHistory.length)
+        ) {
+          const moneyHistory = await collectMoneyHistory(data.profile.username);
+          if (moneyHistory.length) data = { ...data, moneyHistory };
+        }
+        try {
+          if (storage && typeof storage.saveSnapshot === "function") {
+            data = await storage.saveSnapshot(data);
+          }
+        } catch {
+          // A fresh response is still useful when local cache writes are unavailable.
+        }
+        return {
+          ok: true,
+          data,
+          cached: false,
+          fetchedAt: data.fetchedAt || response.fetchedAt || new Date().toISOString(),
+        };
+      }
+
+      const cached = await readCache();
+      return {
+        ok: false,
+        code: (response && response.code) || "collector_failed",
+        cached,
+        message: (response && response.message) || "暂时无法读取社区数据",
       };
     }
 
@@ -174,45 +320,25 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
           return { ok: false, code: "open_failed", message: "无法打开社区页面" };
         }
       }
-      if (message.type !== "GET_STATS") {
+      if (message.type !== "GET_STATS" && message.type !== "GET_WIDGET_STATS") {
         return { ok: false, code: "unknown_message", message: "未知请求" };
       }
 
-      const tab = await getOrCreateCommunityTab();
-      const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : 3000;
-      const response = tab
-        ? await requestFromContentScript(tab.id, { type: "GET_BAIPIAO_STATS" }, timeoutMs)
-        : { ok: false, code: "no_tab", message: "无法打开社区页面" };
-      if (response && response.ok && response.data) {
-        let data = response.data;
-        try {
-          if (storage && typeof storage.saveSnapshot === "function") {
-            data = await storage.saveSnapshot(response.data);
-          }
-        } catch {
-          // A fresh response is still useful when local cache writes are unavailable.
-        }
-        return {
-          ok: true,
-          data,
-          cached: false,
-          fetchedAt: data.fetchedAt || response.fetchedAt || new Date().toISOString(),
-        };
-      }
-
-      const cached = await readCache();
-      return {
-        ok: false,
-        code: (response && response.code) || "collector_failed",
-        cached,
-        message: (response && response.message) || "暂时无法读取社区数据",
-      };
+      const timeoutMs =
+        Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_REQUEST_TIMEOUT_MS;
+      const tab =
+        message.type === "GET_WIDGET_STATS" && options.senderTabId !== undefined
+          ? { id: options.senderTabId }
+          : await getOrCreateCommunityTab();
+      return collectStatsFromTab(tab, timeoutMs);
     }
 
     function installMessageListener() {
       if (!chromeApi.runtime || !chromeApi.runtime.onMessage) return;
       chromeApi.runtime.onMessage.addListener((message, sender, sendResponse) => {
-        handleMessage(message)
+        handleMessage(message, {
+          senderTabId: sender && sender.tab ? sender.tab.id : undefined,
+        })
           .then(sendResponse)
           .catch(() =>
             sendResponse({
@@ -229,8 +355,12 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       findCommunityTab,
       getOrCreateCommunityTab,
       handleMessage,
+      injectCollector,
+      collectMoneyHistory,
+      collectStatsFromTab,
       installMessageListener,
       requestFromContentScript,
+      waitForTabReady,
     };
   }
 

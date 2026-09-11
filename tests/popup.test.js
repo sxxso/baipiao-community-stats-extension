@@ -1,5 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   ERROR_COPY,
   formatCount,
@@ -33,6 +35,15 @@ test("keeps open actions inside the Baipiao community", () => {
   assert.equal(isSafeCommunityUrl("https://baipiao.org/bbs/d/42-topic"), true);
   assert.equal(isSafeCommunityUrl("https://baipiao.org/free/api"), false);
   assert.equal(isSafeCommunityUrl("https://example.com/bbs/u/demo"), false);
+});
+
+test("shows balance and level while moving finance history out of the popup", () => {
+  const html = fs.readFileSync(path.join(__dirname, "..", "popup.html"), "utf8");
+
+  assert.match(html, /毛余额/);
+  assert.match(html, /社区等级/);
+  assert.doesNotMatch(html, /资金记录/);
+  assert.doesNotMatch(html, /获赞|送赞/);
 });
 
 test("provides actionable copy for known failure states", () => {

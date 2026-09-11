@@ -4,6 +4,7 @@ const {
   normalizeProfile,
   normalizeStats,
   normalizeActivity,
+  normalizeMoneyHistory,
   aggregateSevenDayTrend,
   normalizePayload,
 } = require("../lib/data-adapter");
@@ -143,4 +144,52 @@ test("supports Baipiao Connect-style profile aliases", () => {
   assert.equal(result.profile.profileUrl, "https://baipiao.org/bbs/u/connect-demo");
   assert.equal(result.stats.topics, 3);
   assert.equal(result.stats.replies, 15);
+});
+
+test("normalizes the Flarum user resource fields used by the community page", () => {
+  const result = normalizePayload({
+    user: {
+      username: "cjamrklll",
+      displayName: "cjamrklll",
+      avatarUrl: "https://baipiao.org/bbs/assets/avatars/demo.png",
+      joinTime: "2026-08-01T07:00:30+00:00",
+      discussionCount: 22,
+      commentCount: 116,
+      titleBadge: { name: "幕后最终Boss" },
+    },
+  });
+
+  assert.equal(result.profile.joinedAt, "2026-08-01T07:00:30+00:00");
+  assert.equal(result.profile.title, "幕后最终Boss");
+  assert.equal(result.stats.topics, 22);
+  assert.equal(result.stats.replies, 116);
+});
+
+test("normalizes balance, community level, and finance history fields", () => {
+  const result = normalizePayload({
+    user: { username: "demo", money: 13 },
+    summary: {
+      bpMyLevel: -1,
+      levelLabel: "白嫖预备",
+    },
+    moneyHistory: [
+      {
+        type: "扣费",
+        timestamp: "2026-09-10 10:15:10",
+        id: 961,
+        operator: "demo",
+        amount: 30,
+        balanceBefore: 30,
+        balanceAfter: 0,
+        purpose: "称号熔炼",
+      },
+    ],
+  });
+
+  assert.equal(result.stats.money, 13);
+  assert.equal(result.stats.communityLevel, -1);
+  assert.equal(result.stats.levelLabel, "白嫖预备");
+  assert.equal(result.moneyHistory.length, 1);
+  assert.equal(result.moneyHistory[0].purpose, "称号熔炼");
+  assert.equal(normalizeMoneyHistory(null).length, 0);
 });
