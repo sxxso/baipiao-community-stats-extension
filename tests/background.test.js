@@ -150,9 +150,9 @@ test("injects the collector once when an existing tab has no content script", as
   assert.equal(injectionCount, 1);
 });
 
-test("enriches a profile snapshot with dynamic finance history from a temporary page", async () => {
+test("enriches a profile snapshot with finance history requested from the current tab", async () => {
   let statsMessageCount = 0;
-  let removedTabId = null;
+  let createdTabs = 0;
   let historyMessage = null;
   const data = {
     profile: { username: "demo" },
@@ -167,7 +167,10 @@ test("enriches a profile snapshot with dynamic finance history from a temporary 
     tabs: {
       query: async (query) =>
         query.url ? [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }] : [],
-      create: async (options) => ({ id: options.url.includes("money/history") ? 88 : 99, ...options }),
+      create: async (options) => {
+        createdTabs += 1;
+        return { id: 99, ...options };
+      },
       sendMessage: async (tabId, message) => {
         if (message.type === "GET_BAIPIAO_STATS") {
           statsMessageCount += 1;
@@ -190,9 +193,7 @@ test("enriches a profile snapshot with dynamic finance history from a temporary 
           ],
         };
       },
-      remove: async (tabId) => {
-        removedTabId = tabId;
-      },
+      remove: async () => undefined,
     },
   });
   const bridge = createBackground({ chrome, storage: null });
@@ -201,9 +202,9 @@ test("enriches a profile snapshot with dynamic finance history from a temporary 
 
   assert.equal(result.ok, true);
   assert.equal(statsMessageCount, 1);
+  assert.equal(createdTabs, 0);
   assert.equal(historyMessage.waitMs, 6000);
   assert.equal(result.data.moneyHistory.length, 1);
-  assert.equal(removedTabId, 88);
 });
 
 test("keeps enriched finance history in both the returned and cached snapshot", async () => {
@@ -252,6 +253,59 @@ test("keeps enriched finance history in both the returned and cached snapshot", 
 
   assert.equal(result.data.moneyHistory.length, 1);
   assert.equal(savedSnapshot.moneyHistory.length, 1);
+});
+
+test("keeps cached activities when a fresh read returns none", async () => {
+  let savedSnapshot = null;
+  const cached = {
+    profile: { username: "demo" },
+    stats: {},
+    activity: [
+      {
+        type: "reply",
+        title: "Old activity",
+        category: null,
+        timestamp: "2026-09-09T10:00:00+00:00",
+        url: "https://baipiao.org/bbs/d/551-other/4",
+      },
+    ],
+    trend: [{ date: "2026-09-09", count: 1 }],
+    moneyHistory: [],
+    fetchedAt: "2026-09-09T10:00:00+00:00",
+    source: "mixed",
+  };
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 13, communityLevel: -1, levelLabel: "白嫖预备" },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "mixed",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => ({ ok: true, data }),
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => cached,
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.activity.length, 1);
+  assert.equal(result.data.activity[0].title, "Old activity");
+  assert.deepEqual(result.data.trend, [{ date: "2026-09-09", count: 1 }]);
+  assert.equal(savedSnapshot.activity.length, 1);
+  assert.equal(result.data.fetchedAt, "2026-09-10T00:00:00Z");
 });
 
 test("serves an in-page widget request from the sender tab", async () => {

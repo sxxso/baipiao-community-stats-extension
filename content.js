@@ -41,6 +41,11 @@
       ];
     },
   };
+  const POSTS_ENDPOINT = "/bbs/api/posts";
+  const POSTS_PAGE_LIMIT = 20;
+  const PROFILE_ACTIVITIES_TIMEOUT_MS = 5000;
+  const PROFILE_DOM_POLL_WAIT_MS = 3000;
+  const PROFILE_DOM_POLL_INTERVAL_MS = 250;
 
   function isObject(value) {
     return value && typeof value === "object" && !Array.isArray(value);
@@ -149,7 +154,13 @@
         forumResource && forumResource.attributes && forumResource.attributes.bpLevelNames,
       ),
     };
-    return { user, summary, activities: [] };
+    const sessionUserId = Number(payload && payload.session && payload.session.userId);
+    return {
+      user,
+      summary,
+      activities: [],
+      sessionUserId: Number.isFinite(sessionUserId) && sessionUserId > 0 ? sessionUserId : null,
+    };
   }
 
   function readFlarumPayload(documentRef = root.document) {
@@ -159,48 +170,93 @@
     return node ? parseFlarumPayload(node.textContent) : null;
   }
 
-  function parseFlarumDocument(documentRef = root.document) {
-    const payload = readFlarumPayload(documentRef);
-    const activities = extractFlarumActivityRecords(documentRef);
-    const moneyHistory = extractFlarumMoneyHistory(documentRef);
-    return payload || activities.length || moneyHistory.length
-      ? mergePayloads(payload, { activities, moneyHistory })
-      : null;
-  }
-
-  function parseHtmlDocument(html) {
-    if (!html || typeof root.DOMParser !== "function") return null;
-    try {
-      return new root.DOMParser().parseFromString(html, "text/html");
-    } catch {
-      return null;
+  function parseFlarumPostsDocument(value) {
+    const body = parseFlarumJson(value);
+    if (!body) return [];
+    const candidates = [
+      ...(Array.isArray(body.data) ? body.data : []),
+      ...(Array.isArray(body.included) ? body.included : []),
+    ];
+    const discussions = new Map();
+    for (const resource of candidates) {
+      if (resource && resource.type === "discussions" && resource.id !== undefined && resource.id !== null) {
+        discussions.set(String(resource.id), resource);
+      }
     }
-  }
-
-  async function requestHtml(path, timeoutMs = 5000) {
-    if (!isCommunityPath(path) || typeof root.fetch !== "function") return null;
-    const url = new URL(path, ORIGIN);
-    const controller = typeof root.AbortController === "function" ? new root.AbortController() : null;
-    const timer = controller ? setTimeout(() => controller.abort(), timeoutMs) : null;
-    try {
-      const response = await root.fetch(`${url.pathname}${url.search}`, {
-        credentials: "include",
-        headers: { Accept: "text/html" },
-        ...(controller ? { signal: controller.signal } : {}),
+    const records = [];
+    const seen = new Set();
+    for (const resource of candidates) {
+      if (!resource || resource.type !== "posts" || resource.id === undefined || resource.id === null) continue;
+      const id = String(resource.id);
+      if (seen.has(id)) continue;
+      const attrs = isObject(resource.attributes) ? resource.attributes : {};
+      if (attrs.contentType && attrs.contentType !== "comment") continue;
+      const relationships = isObject(resource.relationships) ? resource.relationships : {};
+      const discussionRef =
+        isObject(relationships.discussion) && isObject(relationships.discussion.data)
+          ? relationships.discussion.data
+          : null;
+      const discussionId =
+        discussionRef && discussionRef.id !== undefined && discussionRef.id !== null
+          ? String(discussionRef.id)
+          : null;
+      const discussion = discussionId !== null ? discussions.get(discussionId) : null;
+      const discussionAttrs = isObject(discussion && discussion.attributes)
+        ? discussion.attributes
+        : {};
+      const title = text(firstValue(discussionAttrs.title, attrs.title));
+      if (!title) continue;
+      const slug = text(discussionAttrs.slug);
+      const basePath = slug && slug.startsWith(`${discussionId}-`)
+        ? `/bbs/d/${slug}`
+        : discussionId && /^\d+$/.test(discussionId)
+          ? `/bbs/d/${discussionId}`
+          : null;
+      if (!basePath) continue;
+      const number = Number(attrs.number);
+      seen.add(id);
+      records.push({
+        id,
+        type: Number.isFinite(number) && number === 1 ? "topic" : "reply",
+        title,
+        url: Number.isFinite(number) && number > 1 ? `${basePath}/${number}` : basePath,
+        timestamp: text(firstValue(attrs.createdAt, attrs.editedAt)) || null,
+        category: null,
       });
-      return response.ok ? await response.text() : null;
-    } catch {
-      return null;
-    } finally {
-      if (timer) clearTimeout(timer);
     }
+    return records;
   }
 
-  async function fetchFlarumProfilePayload(username) {
+  async function fetchFlarumPostsActivities(username, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
     const encoded = encodeURIComponent(text(username));
-    if (!encoded) return null;
-    const html = await requestHtml(`/bbs/u/${encoded}`, 5000);
-    return html ? parseFlarumDocument(parseHtmlDocument(html)) : null;
+    if (!encoded || typeof root.fetch !== "function") return [];
+    const query =
+      `filter[author]=${encoded}&filter[type]=comment&page[limit]=${POSTS_PAGE_LIMIT}&sort=-createdAt`;
+    const result = await requestJson(`${POSTS_ENDPOINT}?${query}`, timeoutMs);
+    if (!result.ok || !isObject(result.body)) return [];
+    return parseFlarumPostsDocument(result.body);
+  }
+
+  async function pollProfileActivities(records, waitMs) {
+    let data = Array.isArray(records) ? records : [];
+    const deadline = Date.now() + Math.max(0, Number(waitMs) || 0);
+    while (!data.length && Date.now() < deadline) {
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.min(PROFILE_DOM_POLL_INTERVAL_MS, deadline - Date.now())),
+      );
+      data = extractFlarumActivityRecords(root.document);
+    }
+    return data;
+  }
+
+  async function collectLatestActivities(username, domActivities) {
+    const apiRecords = await fetchFlarumPostsActivities(username);
+    if (apiRecords.length) return apiRecords;
+
+    const pathUser = extractUserFromPath(root.location && root.location.pathname);
+    if (pathUser && text(pathUser) !== username) return [];
+
+    return pollProfileActivities(domActivities, pathUser ? PROFILE_DOM_POLL_WAIT_MS : 0);
   }
 
   function normalizeDomActivity(records) {
@@ -322,11 +378,87 @@
       .filter(Boolean);
   }
 
+  function isMoneyHistoryPage(pathname = root.location && root.location.pathname) {
+    return /\/bbs\/u\/[^/]+\/money\/history\/?$/i.test(text(pathname));
+  }
+
+  function parseFlarumMoneyHistoryDocument(value) {
+    const body = parseFlarumJson(value);
+    if (!body) return [];
+    const candidates = [
+      ...(Array.isArray(body.data) ? body.data : []),
+      ...(Array.isArray(body.included) ? body.included : []),
+    ];
+    const users = new Map();
+    for (const resource of candidates) {
+      if (resource && resource.type === "users" && resource.id !== undefined && resource.id !== null) {
+        users.set(String(resource.id), resource);
+      }
+    }
+    const records = [];
+    const seen = new Set();
+    for (const resource of candidates) {
+      if (!resource || resource.type !== "userMoneyHistory") continue;
+      if (resource.id === undefined || resource.id === null) continue;
+      const id = String(resource.id);
+      if (seen.has(id)) continue;
+      const attrs = isObject(resource.attributes) ? resource.attributes : {};
+      const amount = Number(attrs.money);
+      const balanceBefore = Number(attrs.balance_money);
+      const balanceAfter = Number(attrs.last_money);
+      const timestamp = text(attrs.change_time);
+      const purpose = text(attrs.source_desc);
+      if (!timestamp || !purpose) continue;
+      if (!Number.isFinite(amount) || !Number.isFinite(balanceBefore) || !Number.isFinite(balanceAfter)) continue;
+      const relationships = isObject(resource.relationships) ? resource.relationships : {};
+      const operatorRef =
+        isObject(relationships.createUser) && isObject(relationships.createUser.data)
+          ? relationships.createUser.data
+          : null;
+      const operatorUser =
+        operatorRef && operatorRef.id !== undefined && operatorRef.id !== null
+          ? users.get(String(operatorRef.id))
+          : null;
+      const operatorAttrs = isObject(operatorUser && operatorUser.attributes)
+        ? operatorUser.attributes
+        : {};
+      seen.add(id);
+      records.push({
+        id: Number.isFinite(Number(attrs.id)) ? Number(attrs.id) : Number(id),
+        type: attrs.type === "D" ? "支出" : "收入",
+        timestamp,
+        operator: text(firstValue(operatorAttrs.username, operatorAttrs.displayName)) || null,
+        amount,
+        balanceBefore,
+        balanceAfter,
+        purpose,
+      });
+    }
+    return records;
+  }
+
+  async function fetchFlarumMoneyHistory(sessionUserId, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    const userId = Number(sessionUserId);
+    if (!Number.isInteger(userId) || userId <= 0 || typeof root.fetch !== "function") return [];
+    const result = await requestJson(
+      `/bbs/api/users/${userId}/money/history?filter[user]=${userId}&page[offset]=0`,
+      timeoutMs,
+    );
+    if (!result.ok || !isObject(result.body)) return [];
+    return parseFlarumMoneyHistoryDocument(result.body);
+  }
+
   async function collectMoneyHistory(options = {}) {
+    const payload = readFlarumPayload(root.document);
+    if (payload && payload.sessionUserId) {
+      const records = await fetchFlarumMoneyHistory(payload.sessionUserId);
+      if (records.length) return { ok: true, data: records };
+    }
+    let data = extractFlarumMoneyHistory(root.document);
+    if (!isMoneyHistoryPage()) return { ok: true, data };
     const waitMs = Math.max(0, Number(options.waitMs) || 0);
     const pollMs = Math.max(25, Number(options.pollMs) || 150);
     const deadline = Date.now() + waitMs;
-    let data = extractFlarumMoneyHistory(root.document);
     while (!data.length && Date.now() < deadline) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(pollMs, deadline - Date.now())));
       data = extractFlarumMoneyHistory(root.document);
@@ -581,14 +713,20 @@
       };
     }
     let domPayload = collectDomFallback();
-    if (domPayload.user && domPayload.user.username) {
-      const profilePromise = domPayload.activities.length
-        ? Promise.resolve(null)
-        : fetchFlarumProfilePayload(domPayload.user.username);
-      const profilePayload = await profilePromise;
-      if (profilePayload) domPayload = mergePayloads(domPayload, profilePayload);
+    const username = text(domPayload.user && domPayload.user.username);
+    if (username) {
+      const hasDomMoney =
+        Array.isArray(domPayload.moneyHistory) && domPayload.moneyHistory.length > 0;
+      const [activities, apiMoneyHistory] = await Promise.all([
+        collectLatestActivities(username, domPayload.activities),
+        hasDomMoney
+          ? Promise.resolve([])
+          : fetchFlarumMoneyHistory(bootstrap ? bootstrap.sessionUserId : null),
+      ]);
+      domPayload.activities = activities;
+      if (apiMoneyHistory.length) domPayload.moneyHistory = apiMoneyHistory;
     }
-    if (domPayload.user && domPayload.user.username) {
+    if (username) {
       const data =
         typeof adapter.normalizePayload === "function"
           ? adapter.normalizePayload(domPayload, domPayload.activities.length ? "mixed" : "api")
@@ -604,16 +742,16 @@
 
     const session = await firstJson(ENDPOINTS.session);
     const sessionUser = session ? findUser(session.body) : null;
-    const username = text(
+    const sessionUsername = text(
       firstValue(
         sessionUser && sessionUser.username,
         sessionUser && sessionUser.preferred_username,
         sessionUser && sessionUser.user_name,
-        domPayload.user && domPayload.user.username,
+        username,
       ),
     );
 
-    if (!username) {
+    if (!sessionUsername) {
       return {
         ok: false,
         code: "not_logged_in",
@@ -621,8 +759,8 @@
       };
     }
 
-    const userResult = await firstJson(ENDPOINTS.user(username));
-    const activityResult = await firstJson(ENDPOINTS.activity(username));
+    const userResult = await firstJson(ENDPOINTS.user(sessionUsername));
+    const activityResult = await firstJson(ENDPOINTS.activity(sessionUsername));
     const apiPayloads = [
       sessionUser ? { user: sessionUser } : null,
       userResult
@@ -642,7 +780,7 @@
         : null,
     ].filter(Boolean);
     const combined = mergePayloads(domPayload, ...apiPayloads);
-    combined.user.username = username;
+    combined.user.username = sessionUsername;
     const source = apiPayloads.length && domPayload.user ? "mixed" : apiPayloads.length ? "api" : "dom";
     const data =
       typeof adapter.normalizePayload === "function"
@@ -691,15 +829,22 @@
   return {
     ENDPOINTS,
     collectCommunityStats,
+    collectLatestActivities,
     collectMoneyHistory,
     collectDomFallback,
     extractFlarumActivityRecords,
     extractFlarumMoneyHistory,
     extractUserFromPath,
+    fetchFlarumMoneyHistory,
+    fetchFlarumPostsActivities,
     installMessageListener,
     isCommunityPath,
+    isMoneyHistoryPage,
     normalizeDomActivity,
     parseFlarumPayload,
+    parseFlarumMoneyHistoryDocument,
+    parseFlarumPostsDocument,
+    pollProfileActivities,
     requestJson,
   };
 });

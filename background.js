@@ -191,43 +191,29 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       }
     }
 
-    async function collectMoneyHistory(username) {
-      const value = text(username);
-      if (!value || typeof chromeApi.tabs.remove !== "function") return [];
-      let tab = null;
-      try {
-        tab = await promiseCall(chromeApi.tabs.create.bind(chromeApi.tabs), [
-          {
-            url: `${COMMUNITY_URL}u/${encodeURIComponent(value)}/money/history`,
-            active: false,
-          },
-        ]);
-        if (!tab || tab.id === undefined) return [];
-        await waitForTabReady(tab);
-        let response = await requestFromContentScript(
+    async function collectMoneyHistoryFromTab(tab, timeoutMs = MONEY_HISTORY_TIMEOUT_MS) {
+      let response =
+        tab && tab.id !== undefined
+          ? await requestFromContentScript(
+              tab.id,
+              { type: "GET_BAIPIAO_MONEY_HISTORY", waitMs: MONEY_HISTORY_WAIT_MS },
+              timeoutMs,
+            )
+          : { ok: false, code: "no_tab", message: "无法读取资金记录" };
+      if (
+        response &&
+        response.code === "content_unavailable" &&
+        tab &&
+        tab.id !== undefined &&
+        (await injectCollector(tab.id))
+      ) {
+        response = await requestFromContentScript(
           tab.id,
           { type: "GET_BAIPIAO_MONEY_HISTORY", waitMs: MONEY_HISTORY_WAIT_MS },
-          MONEY_HISTORY_TIMEOUT_MS,
+          timeoutMs,
         );
-        if (response && response.code === "content_unavailable" && (await injectCollector(tab.id))) {
-          response = await requestFromContentScript(
-            tab.id,
-            { type: "GET_BAIPIAO_MONEY_HISTORY", waitMs: MONEY_HISTORY_WAIT_MS },
-            MONEY_HISTORY_TIMEOUT_MS,
-          );
-        }
-        return response && response.ok && Array.isArray(response.data) ? response.data : [];
-      } catch {
-        return [];
-      } finally {
-        if (tab && tab.id !== undefined) {
-          try {
-            await promiseCall(chromeApi.tabs.remove.bind(chromeApi.tabs), [tab.id]);
-          } catch {
-            // A temporary tab is best-effort cleanup and does not affect the snapshot.
-          }
-        }
       }
+      return response && response.ok && Array.isArray(response.data) ? response.data : [];
     }
 
     async function collectStatsFromTab(tab, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
@@ -263,8 +249,20 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
           data.profile.username &&
           (!Array.isArray(data.moneyHistory) || !data.moneyHistory.length)
         ) {
-          const moneyHistory = await collectMoneyHistory(data.profile.username);
+          const moneyHistory = await collectMoneyHistoryFromTab(tab);
           if (moneyHistory.length) data = { ...data, moneyHistory };
+        }
+        if (!Array.isArray(data.activity) || !data.activity.length) {
+          const cached = await readCache();
+          const cachedActivity = cached && Array.isArray(cached.activity) ? cached.activity : [];
+          if (cachedActivity.length) {
+            data = {
+              ...data,
+              activity: cachedActivity,
+              trend:
+                Array.isArray(cached.trend) && cached.trend.length ? cached.trend : data.trend,
+            };
+          }
         }
         try {
           if (storage && typeof storage.saveSnapshot === "function") {
@@ -356,7 +354,7 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       getOrCreateCommunityTab,
       handleMessage,
       injectCollector,
-      collectMoneyHistory,
+      collectMoneyHistoryFromTab,
       collectStatsFromTab,
       installMessageListener,
       requestFromContentScript,
