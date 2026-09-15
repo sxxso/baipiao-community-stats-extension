@@ -163,6 +163,41 @@
     };
   }
 
+  function parseFlarumUserDocument(value, expectedId = null) {
+    const body = parseFlarumJson(value);
+    if (!body) return null;
+    const candidates = [
+      ...(isObject(body.data) ? [body.data] : []),
+      ...(Array.isArray(body.included) ? body.included : []),
+      ...(Array.isArray(body.resources) ? body.resources : []),
+    ];
+    const expected = Number(expectedId);
+    const userResource = candidates.find(
+      (resource) =>
+        resource &&
+        resource.type === "users" &&
+        (Number.isInteger(expected) && expected > 0 ? String(resource.id) === String(expected) : true),
+    );
+    if (!userResource) return null;
+    const attrs = isObject(userResource.attributes) ? userResource.attributes : {};
+    const username = text(firstValue(attrs.username, attrs.slug));
+    const money = Number(attrs.money);
+    const summary = {};
+    if (attrs.discussionCount !== undefined) summary.discussionCount = attrs.discussionCount;
+    if (attrs.commentCount !== undefined) summary.commentCount = attrs.commentCount;
+    if (attrs["fof-upload-uploadCountAll"] !== undefined) {
+      summary.uploads = attrs["fof-upload-uploadCountAll"];
+    }
+    if (Number.isFinite(money)) summary.money = money;
+    const user = username ? { username, profileUrl: `/bbs/u/${encodeURIComponent(username)}` } : null;
+    const displayName = firstValue(attrs.displayName, attrs.username);
+    if (user && displayName !== undefined) user.displayName = displayName;
+    if (user && attrs.avatarUrl !== undefined) user.avatarUrl = attrs.avatarUrl;
+    if (user && attrs.joinTime !== undefined) user.joinTime = attrs.joinTime;
+    if (user && attrs.lastSeenAt !== undefined) user.lastSeenAt = attrs.lastSeenAt;
+    return { user, summary };
+  }
+
   function readFlarumPayload(documentRef = root.document) {
     const node = documentRef && typeof documentRef.getElementById === "function"
       ? documentRef.getElementById("flarum-json-payload")
@@ -435,6 +470,14 @@
       });
     }
     return records;
+  }
+
+  async function fetchFlarumUser(sessionUserId, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    const userId = Number(sessionUserId);
+    if (!Number.isInteger(userId) || userId <= 0 || typeof root.fetch !== "function") return null;
+    const result = await requestJson(`/bbs/api/users/${userId}`, timeoutMs);
+    if (!result.ok || !isObject(result.body)) return null;
+    return parseFlarumUserDocument(result.body, userId);
   }
 
   async function fetchFlarumMoneyHistory(sessionUserId, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
@@ -714,15 +757,21 @@
     }
     let domPayload = collectDomFallback();
     const username = text(domPayload.user && domPayload.user.username);
+    const sessionUserId = bootstrap ? bootstrap.sessionUserId : null;
     if (username) {
-      const hasDomMoney =
-        Array.isArray(domPayload.moneyHistory) && domPayload.moneyHistory.length > 0;
-      const [activities, apiMoneyHistory] = await Promise.all([
+      const [authoritativeUser, activities, apiMoneyHistory] = await Promise.all([
+        fetchFlarumUser(sessionUserId),
         collectLatestActivities(username, domPayload.activities),
-        hasDomMoney
-          ? Promise.resolve([])
-          : fetchFlarumMoneyHistory(bootstrap ? bootstrap.sessionUserId : null),
+        fetchFlarumMoneyHistory(sessionUserId),
       ]);
+      if (authoritativeUser) {
+        if (isObject(authoritativeUser.user)) {
+          domPayload.user = { ...domPayload.user, ...authoritativeUser.user };
+        }
+        if (isObject(authoritativeUser.summary)) {
+          domPayload.summary = { ...domPayload.summary, ...authoritativeUser.summary };
+        }
+      }
       domPayload.activities = activities;
       if (apiMoneyHistory.length) domPayload.moneyHistory = apiMoneyHistory;
     }
@@ -837,6 +886,8 @@
     extractUserFromPath,
     fetchFlarumMoneyHistory,
     fetchFlarumPostsActivities,
+    fetchFlarumUser,
+    parseFlarumUserDocument,
     installMessageListener,
     isCommunityPath,
     isMoneyHistoryPage,

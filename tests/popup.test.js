@@ -9,6 +9,7 @@ const {
   formatRelative,
   isSafeCommunityUrl,
   load,
+  refresh,
   state,
 } = require("../popup");
 
@@ -55,6 +56,56 @@ test("provides actionable copy for known failure states", () => {
   ]);
   assert.equal(ERROR_COPY.timeout[0], "读取超时");
   assert.equal(ERROR_COPY.unknown[0], "暂时无法读取");
+});
+
+test("refresh replaces cached balance with the latest background snapshot", async () => {
+  const originalChrome = global.chrome;
+  const originalDocument = global.document;
+  const fresh = {
+    profile: { username: "demo" },
+    stats: { money: 88 },
+    activity: [],
+    trend: [],
+    fetchedAt: "2026-09-15T00:00:00Z",
+    source: "api",
+  };
+  const requests = [];
+  global.document = {
+    getElementById: () => null,
+  };
+  global.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message.type);
+        callback({ ok: true, data: fresh });
+      },
+    },
+  };
+  state.data = {
+    profile: { username: "demo" },
+    stats: { money: 13 },
+  };
+  state.cached = true;
+  state.error = "stale";
+  state.status = "success";
+  state.requesting = false;
+
+  try {
+    await refresh();
+    assert.deepEqual(requests, ["GET_STATS"]);
+    assert.equal(state.data.stats.money, 88);
+    assert.equal(state.cached, false);
+    assert.equal(state.error, "");
+    assert.equal(state.status, "success");
+  } finally {
+    global.chrome = originalChrome;
+    global.document = originalDocument;
+    state.data = null;
+    state.cached = false;
+    state.error = "";
+    state.status = "loading";
+    state.requesting = false;
+  }
 });
 
 test("opening the popup reads cache without refreshing remote data", async () => {

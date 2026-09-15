@@ -204,6 +204,7 @@ test("enriches a profile snapshot with finance history requested from the curren
   assert.equal(statsMessageCount, 1);
   assert.equal(createdTabs, 0);
   assert.equal(historyMessage.waitMs, 6000);
+  assert.equal(result.data.stats.money, 13);
   assert.equal(result.data.moneyHistory.length, 1);
 });
 
@@ -251,7 +252,9 @@ test("keeps enriched finance history in both the returned and cached snapshot", 
 
   const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
 
+  assert.equal(result.data.stats.money, 796);
   assert.equal(result.data.moneyHistory.length, 1);
+  assert.equal(savedSnapshot.stats.money, 796);
   assert.equal(savedSnapshot.moneyHistory.length, 1);
 });
 
@@ -259,7 +262,7 @@ test("keeps cached activities when a fresh read returns none", async () => {
   let savedSnapshot = null;
   const cached = {
     profile: { username: "demo" },
-    stats: {},
+    stats: { money: 7 },
     activity: [
       {
         type: "reply",
@@ -301,6 +304,7 @@ test("keeps cached activities when a fresh read returns none", async () => {
   const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
 
   assert.equal(result.ok, true);
+  assert.equal(result.data.stats.money, 13);
   assert.equal(result.data.activity.length, 1);
   assert.equal(result.data.activity[0].title, "Old activity");
   assert.deepEqual(result.data.trend, [{ date: "2026-09-09", count: 1 }]);

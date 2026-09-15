@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "白嫖社区个人统计",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "查看白嫖社区当前登录账号的个人资料、社区统计和资金记录。",
   "permissions": ["storage", "tabs", "scripting"],
   "host_permissions": ["https://baipiao.org/bbs/*"],

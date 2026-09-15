@@ -11,6 +11,7 @@ const {
   parseFlarumPayload,
   parseFlarumMoneyHistoryDocument,
   parseFlarumPostsDocument,
+  parseFlarumUserDocument,
 } = require("../content");
 
 const flarumPayload = {
@@ -67,6 +68,18 @@ const postsApiDocument = {
     { type: "discussions", id: "552", attributes: { title: "Demo topic", slug: "552-demo-topic" } },
     { type: "discussions", id: "551", attributes: { title: "Other topic", slug: "551-other-topic" } },
   ],
+};
+
+const userApiDocument = {
+  data: {
+    type: "users",
+    id: "191",
+    attributes: {
+      username: "cjamrklll",
+      displayName: "cjamrklll",
+      money: 88,
+    },
+  },
 };
 
 const moneyApiDocument = {
@@ -166,6 +179,13 @@ test("does not treat a public Flarum resource as the signed-in user", () => {
   });
 
   assert.equal(result.user, null);
+});
+
+test("parses the numeric user API resource and its authoritative balance", () => {
+  const result = parseFlarumUserDocument(userApiDocument, 191);
+
+  assert.equal(result.user.username, "cjamrklll");
+  assert.equal(result.summary.money, 88);
 });
 
 test("returns a login error for a Flarum payload without a session user", async () => {
@@ -372,6 +392,9 @@ test("collects the signed-in user's activities through the Flarum posts API on a
       assert.equal(url.searchParams.get("sort"), "-createdAt");
       return { ok: true, json: async () => postsApiDocument };
     }
+    if (url.pathname === "/bbs/api/users/191") {
+      return { ok: true, json: async () => userApiDocument };
+    }
     assert.equal(url.pathname, "/bbs/api/users/191/money/history");
     assert.equal(url.searchParams.get("filter[user]"), "191");
     return { ok: true, json: async () => moneyApiDocument };
@@ -381,6 +404,7 @@ test("collects the signed-in user's activities through the Flarum posts API on a
     const result = await collectCommunityStats();
     assert.equal(result.ok, true);
     assert.equal(result.data.profile.username, "cjamrklll");
+    assert.equal(result.data.stats.money, 88);
     assert.equal(result.data.activity.length, 2);
     assert.equal(result.data.activity[0].type, "topic");
     assert.equal(result.data.activity[0].title, "Demo topic");
@@ -393,8 +417,44 @@ test("collects the signed-in user's activities through the Flarum posts API on a
     assert.equal(result.data.moneyHistory[0].balanceAfter, 3);
     assert.deepEqual(
       requestedPaths.map((path) => new URL(path, "https://baipiao.org").pathname).sort(),
-      ["/bbs/api/posts", "/bbs/api/users/191/money/history"],
+      ["/bbs/api/posts", "/bbs/api/users/191", "/bbs/api/users/191/money/history"],
     );
+  } finally {
+    global.document = originalDocument;
+    global.location = originalLocation;
+    global.fetch = originalFetch;
+  }
+});
+
+test("keeps the bootstrap balance when the current-user API is unavailable", async () => {
+  const originalDocument = global.document;
+  const originalLocation = global.location;
+  const originalFetch = global.fetch;
+  const requestedPaths = [];
+  global.document = {
+    getElementById: () => ({ textContent: JSON.stringify(flarumPayload) }),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  global.location = { pathname: "/bbs/" };
+  global.fetch = async (path) => {
+    const url = new URL(path, "https://baipiao.org");
+    requestedPaths.push(url.pathname);
+    if (url.pathname === "/bbs/api/users/191") {
+      return {
+        ok: true,
+        json: async () => ({ data: { type: "users", id: "999", attributes: { money: 999 } } }),
+      };
+    }
+    if (url.pathname === "/bbs/api/posts") return { ok: true, json: async () => ({ data: [] }) };
+    return { ok: true, json: async () => ({ data: [] }) };
+  };
+
+  try {
+    const result = await collectCommunityStats();
+    assert.equal(result.ok, true);
+    assert.equal(result.data.stats.money, 13);
+    assert.ok(requestedPaths.includes("/bbs/api/users/191"));
   } finally {
     global.document = originalDocument;
     global.location = originalLocation;
@@ -572,6 +632,50 @@ test("parses Flarum money history documents into normalized records", () => {
       purpose: "活动奖励",
     },
   ]);
+});
+
+test("prefers fresh finance API data over already-rendered history rows", async () => {
+  const originalDocument = global.document;
+  const originalLocation = global.location;
+  const originalFetch = global.fetch;
+  const renderedRecord = {
+    textContent:
+      "类型: 奖励 | 时间: 2026-09-12 09:00:00 ID: 999 | 操作人: admin | 金额: 1 | 余额变动: 13 → 14 | 资金用途: 旧页面记录",
+    querySelector: () => ({ textContent: "admin" }),
+  };
+  const requestedPaths = [];
+  global.document = {
+    getElementById: () => ({ textContent: JSON.stringify(flarumPayload) }),
+    querySelector: () => null,
+    querySelectorAll: (selector) =>
+      selector === ".transferHistoryContainer" ? [renderedRecord] : [],
+  };
+  global.location = { pathname: "/bbs/" };
+  global.fetch = async (path) => {
+    const url = new URL(path, "https://baipiao.org");
+    requestedPaths.push(url.pathname);
+    if (url.pathname === "/bbs/api/posts") return { ok: true, json: async () => ({ data: [] }) };
+    if (url.pathname === "/bbs/api/users/191") {
+      return { ok: true, json: async () => userApiDocument };
+    }
+    return { ok: true, json: async () => moneyApiDocument };
+  };
+
+  try {
+    const result = await collectCommunityStats();
+    assert.equal(result.ok, true);
+    assert.equal(result.data.moneyHistory[0].id, 1234);
+    assert.notEqual(result.data.moneyHistory[0].id, 999);
+    assert.deepEqual(requestedPaths.sort(), [
+      "/bbs/api/posts",
+      "/bbs/api/users/191",
+      "/bbs/api/users/191/money/history",
+    ]);
+  } finally {
+    global.document = originalDocument;
+    global.location = originalLocation;
+    global.fetch = originalFetch;
+  }
 });
 
 test("collects finance history through the money history API from any page", async () => {
