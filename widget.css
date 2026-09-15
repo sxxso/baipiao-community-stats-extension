@@ -165,6 +165,89 @@
   color: var(--bp-widget-orange);
 }
 
+.bp-money-widget__subhead {
+  margin: 12px 0 2px;
+  padding-top: 10px;
+  border-top: 1px solid var(--bp-widget-line);
+  color: var(--bp-widget-muted);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.bp-money-widget__rank-me {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bp-widget-mint-soft);
+  font-size: 11px;
+}
+
+.bp-money-widget__rank-me-label {
+  color: #117d68;
+  font-weight: 700;
+}
+
+.bp-money-widget__rank-me-hint {
+  color: var(--bp-widget-muted);
+  font-size: 10px;
+}
+
+.bp-money-widget__ranks {
+  display: grid;
+  gap: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bp-money-widget__rank {
+  display: grid;
+  grid-template-columns: 26px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 6px 0;
+  border-bottom: 1px solid var(--bp-widget-line);
+}
+
+.bp-money-widget__rank:last-child {
+  border-bottom: 0;
+}
+
+.bp-money-widget__rank.is-me .bp-money-widget__rank-name {
+  color: #117d68;
+}
+
+.bp-money-widget__rank-no {
+  color: var(--bp-widget-muted);
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.bp-money-widget__rank-name {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-money-widget__rank-money {
+  color: var(--bp-widget-muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.bp-money-widget__rank-empty {
+  margin: 8px 0 0;
+  color: var(--bp-widget-muted);
+  text-align: center;
+}
+
 .bp-money-widget__footer {
   display: flex;
   min-height: 38px;

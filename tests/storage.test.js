@@ -45,6 +45,71 @@ test("cache strips credential-like and raw-response fields", async () => {
   assert.equal("cookie" in saved, false);
 });
 
+test("sanitizes the leaderboard block and drops unsafe entries", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  const rows = [];
+  for (let rank = 1; rank <= 15; rank += 1) {
+    rows.push({
+      rank,
+      username: `user${rank}`,
+      money: 1000 - rank,
+      url: `https://baipiao.org/bbs/u/user${rank}`,
+      isMe: rank === 1,
+      raw: "discard",
+    });
+  }
+  rows.push({ rank: 99, username: "bad", money: 5, url: "javascript:alert(1)" });
+
+  await storage.saveSnapshot({
+    profile: { username: "user1" },
+    stats: { money: 900 },
+    activity: [],
+    moneyHistory: [],
+    leaderboard: { top: rows, me: { rank: 1, money: 999, inTop: true, cookie: "x" }, total: 503 },
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  });
+
+  const saved = await storage.loadSnapshot();
+  assert.equal(saved.leaderboard.top.length, 10);
+  assert.equal("raw" in saved.leaderboard.top[0], false);
+  assert.equal(
+    saved.leaderboard.top.some((entry) => entry.username === "bad"),
+    false,
+  );
+  assert.equal(saved.leaderboard.me.rank, 1);
+  assert.equal("cookie" in saved.leaderboard.me, false);
+  assert.equal(saved.leaderboard.total, 503);
+});
+
+test("returns a null leaderboard when there is no usable data", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  await storage.saveSnapshot({
+    profile: { username: "demo" },
+    stats: { money: 1 },
+    activity: [],
+    moneyHistory: [],
+    leaderboard: { top: [], me: null, total: null },
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  });
+
+  const saved = await storage.loadSnapshot();
+  assert.equal(saved.leaderboard, null);
+});
+
 test("returns null when no cached snapshot exists", async () => {
   const storage = createStorage({
     get: async () => undefined,

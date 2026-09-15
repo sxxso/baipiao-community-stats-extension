@@ -25,6 +25,9 @@ test("ships the in-page finance widget and loads it on community pages", () => {
   assert.match(widget, /baipiao-money-widget/);
   assert.match(widget, /GET_WIDGET_STATS/);
   assert.match(widget, /aria-expanded/);
+  assert.match(widget, /renderRanks/);
+  assert.match(widget, /bp-money-widget__ranks/);
+  assert.match(widget, /COMMUNITY_URL}money/);
   assert.deepEqual(manifest.content_scripts[0].js, [
     "lib/data-adapter.js",
     "content.js",

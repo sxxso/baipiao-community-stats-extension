@@ -1,7 +1,7 @@
 {
   "name": "baipiao-community-stats-extension",
   "private": true,
-  "version": "0.2.4",
+  "version": "0.2.5",
   "type": "commonjs",
   "scripts": {
     "test": "node --test --test-concurrency=1 tests/*.test.js",

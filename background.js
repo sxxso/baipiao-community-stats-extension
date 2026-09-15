@@ -264,6 +264,13 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
             };
           }
         }
+        if (!data.leaderboard || !Array.isArray(data.leaderboard.top) || !data.leaderboard.top.length) {
+          const cached = await readCache();
+          const cachedBoard = cached && cached.leaderboard;
+          if (cachedBoard && Array.isArray(cachedBoard.top) && cachedBoard.top.length) {
+            data = { ...data, leaderboard: cachedBoard };
+          }
+        }
         try {
           if (storage && typeof storage.saveSnapshot === "function") {
             data = await storage.saveSnapshot(data);

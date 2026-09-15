@@ -5,6 +5,7 @@ const {
   normalizeStats,
   normalizeActivity,
   normalizeMoneyHistory,
+  normalizeLeaderboard,
   aggregateSevenDayTrend,
   normalizePayload,
 } = require("../lib/data-adapter");
@@ -192,4 +193,44 @@ test("normalizes balance, community level, and finance history fields", () => {
   assert.equal(result.moneyHistory.length, 1);
   assert.equal(result.moneyHistory[0].purpose, "称号熔炼");
   assert.equal(normalizeMoneyHistory(null).length, 0);
+});
+
+test("normalizes the leaderboard and caps the visible rows", () => {
+  const board = normalizeLeaderboard({
+    top: [
+      { rank: 2, username: "b", money: 50, url: "/bbs/u/b", isMe: true },
+      { rank: 1, username: "a", money: 100, url: "https://evil.example/x" },
+      { rank: 3, username: "c", money: 40, url: "/bbs/u/c" },
+      { rank: 4, username: "", money: 1, url: "/bbs/u/" },
+    ],
+    me: { rank: 2, money: 50, inTop: true },
+    total: 503,
+  });
+
+  assert.equal(board.top.length, 3);
+  assert.deepEqual(
+    board.top.map((entry) => entry.username),
+    ["a", "b", "c"],
+  );
+  assert.equal(board.top[0].url, "https://baipiao.org/bbs/u/a");
+  assert.equal(board.me.rank, 2);
+  assert.equal(board.total, 503);
+});
+
+test("drops an empty leaderboard and keeps a my-rank-only board", () => {
+  assert.equal(normalizeLeaderboard(null), null);
+  assert.equal(normalizeLeaderboard({ top: [], me: null, total: 0 }), null);
+  const meOnly = normalizeLeaderboard({ top: [], me: { rank: 88, money: 5, inTop: false } });
+  assert.equal(meOnly.top.length, 0);
+  assert.equal(meOnly.me.rank, 88);
+});
+
+test("normalizePayload carries the leaderboard section", () => {
+  const result = normalizePayload({
+    user: { username: "demo", money: 5 },
+    leaderboard: { top: [{ rank: 1, username: "demo", money: 5, url: "/bbs/u/demo", isMe: true }], me: null, total: 1 },
+  });
+
+  assert.equal(result.leaderboard.top.length, 1);
+  assert.equal(result.leaderboard.top[0].username, "demo");
 });

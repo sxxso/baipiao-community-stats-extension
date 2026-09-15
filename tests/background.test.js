@@ -312,6 +312,96 @@ test("keeps cached activities when a fresh read returns none", async () => {
   assert.equal(result.data.fetchedAt, "2026-09-10T00:00:00Z");
 });
 
+test("keeps the cached leaderboard when a fresh read returns none", async () => {
+  let savedSnapshot = null;
+  const cachedLeaderboard = {
+    top: [{ rank: 1, username: "admin", money: 2833, url: "https://baipiao.org/bbs/u/admin", isMe: false }],
+    me: { rank: 20, money: 81, inTop: false },
+    total: 503,
+  };
+  const cached = {
+    profile: { username: "demo" },
+    stats: { money: 81 },
+    activity: [],
+    moneyHistory: [],
+    leaderboard: cachedLeaderboard,
+    trend: [],
+    fetchedAt: "2026-09-09T10:00:00+00:00",
+    source: "mixed",
+  };
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 81 },
+    activity: [{ type: "reply", title: "Fresh", category: null, timestamp: "2026-09-10T00:00:00Z", url: "https://baipiao.org/bbs/d/551/1" }],
+    moneyHistory: [],
+    leaderboard: null,
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => ({ ok: true, data }),
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => cached,
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.data.leaderboard, cachedLeaderboard);
+  assert.deepEqual(savedSnapshot.leaderboard, cachedLeaderboard);
+});
+
+test("returns and caches a fresh leaderboard without touching the cache", async () => {
+  let savedSnapshot = null;
+  const freshLeaderboard = {
+    top: [{ rank: 1, username: "admin", money: 3000, url: "https://baipiao.org/bbs/u/admin", isMe: false }],
+    me: { rank: 2, money: 90, inTop: true },
+    total: 510,
+  };
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 90 },
+    activity: [{ type: "reply", title: "Fresh", category: null, timestamp: "2026-09-10T00:00:00Z", url: "https://baipiao.org/bbs/d/551/1" }],
+    moneyHistory: [],
+    leaderboard: freshLeaderboard,
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => ({ ok: true, data }),
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => {
+      throw new Error("cache must not be read when fresh leaderboard exists");
+    },
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.leaderboard.total, 510);
+  assert.equal(savedSnapshot.leaderboard.me.rank, 2);
+});
+
 test("serves an in-page widget request from the sender tab", async () => {
   const data = {
     profile: { username: "demo" },

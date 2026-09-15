@@ -133,6 +133,18 @@
     list.id = "bp-money-widget-list";
     body.append(status, list);
 
+    const rankHeading = createNode("div", "bp-money-widget__subhead", "毛排行榜");
+    rankHeading.id = "bp-money-widget-rank-heading";
+    const rankMe = createNode("div", "bp-money-widget__rank-me");
+    rankMe.id = "bp-money-widget-rank-me";
+    rankMe.hidden = true;
+    const ranks = createNode("ol", "bp-money-widget__ranks");
+    ranks.id = "bp-money-widget-ranks";
+    const rankEmpty = createNode("p", "bp-money-widget__rank-empty", "暂无排行榜数据");
+    rankEmpty.id = "bp-money-widget-rank-empty";
+    rankEmpty.hidden = true;
+    body.append(rankHeading, rankMe, ranks, rankEmpty);
+
     const footer = createNode("footer", "bp-money-widget__footer");
     const count = createNode("span", "", "最近 5 条");
     count.id = "bp-money-widget-count";
@@ -141,7 +153,12 @@
     historyLink.target = "_blank";
     historyLink.rel = "noreferrer";
     historyLink.hidden = true;
-    footer.append(count, historyLink);
+    const rankLink = createNode("a", "bp-money-widget__link", "排行榜 ↗");
+    rankLink.id = "bp-money-widget-rank-link";
+    rankLink.target = "_blank";
+    rankLink.rel = "noreferrer";
+    rankLink.href = `${COMMUNITY_URL}money`;
+    footer.append(count, historyLink, rankLink);
 
     widget.append(header, body, footer);
     root.document.body.append(widget);
@@ -192,6 +209,59 @@
     }
   }
 
+  function renderRanks(board) {
+    const heading = root.document.getElementById("bp-money-widget-rank-heading");
+    const meNode = root.document.getElementById("bp-money-widget-rank-me");
+    const list = root.document.getElementById("bp-money-widget-ranks");
+    const empty = root.document.getElementById("bp-money-widget-rank-empty");
+    if (!board) {
+      if (heading) heading.hidden = true;
+      if (meNode) {
+        meNode.hidden = true;
+        meNode.replaceChildren();
+      }
+      if (list) {
+        list.hidden = true;
+        list.replaceChildren();
+      }
+      if (empty) empty.hidden = true;
+      return;
+    }
+    if (meNode) {
+      meNode.replaceChildren();
+      const me = board.me;
+      if (me) {
+        meNode.hidden = false;
+        meNode.append(createNode("span", "bp-money-widget__rank-me-label", "我的名次"));
+        meNode.append(createNode("strong", "", `第 ${formatNumber(me.rank)} 名`));
+        if (!me.inTop) {
+          meNode.append(createNode("span", "bp-money-widget__rank-me-hint", "未进展示榜"));
+        }
+      } else {
+        meNode.hidden = true;
+      }
+    }
+    const rows = Array.isArray(board.top) ? board.top.slice(0, 5) : [];
+    if (list) {
+      list.replaceChildren();
+      for (const entry of rows) {
+        if (!text(entry.username)) continue;
+        const item = createNode("li", "bp-money-widget__rank");
+        if (entry.isMe) item.classList.add("is-me");
+        item.append(createNode("span", "bp-money-widget__rank-no", String(entry.rank)));
+        item.append(createNode("span", "bp-money-widget__rank-name", text(entry.username)));
+        item.append(
+          createNode("span", "bp-money-widget__rank-money", `${formatNumber(entry.money)} 毛`),
+        );
+        list.append(item);
+      }
+    }
+    const hasRows = Boolean(list && list.children.length);
+    if (heading) heading.hidden = !hasRows;
+    if (list) list.hidden = !hasRows;
+    if (empty) empty.hidden = hasRows;
+  }
+
   function render() {
     const widget = root.document.getElementById(WIDGET_ID);
     if (!widget) return;
@@ -232,6 +302,7 @@
     }
 
     renderRecords(records);
+    renderRanks(state.data && state.data.leaderboard);
     if (status) {
       status.hidden = records.length > 0;
       status.textContent = state.loading

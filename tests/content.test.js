@@ -10,6 +10,7 @@ const {
   normalizeDomActivity,
   parseFlarumPayload,
   parseFlarumMoneyHistoryDocument,
+  parseFlarumMoneyRankDocument,
   parseFlarumPostsDocument,
   parseFlarumUserDocument,
 } = require("../content");
@@ -124,6 +125,25 @@ const moneyApiDocument = {
   included: [
     { type: "users", id: "1", attributes: { username: "admin", displayName: "admin" } },
   ],
+};
+
+const leaderboardApiDocument = {
+  data: {
+    top: [
+      {
+        id: 1,
+        username: "admin",
+        money: 2833,
+        rank: 1,
+        avatarUrl: "https://baipiao.org/bbs/assets/avatars/1.png",
+        isMe: false,
+      },
+      { id: 191, username: "cjamrklll", money: 88, rank: 2, isMe: true },
+      { id: 158, username: "xiaoyi", money: 50, rank: 3, isMe: false },
+    ],
+    me: { rank: 2, money: 88, inTop: true },
+    total: 503,
+  },
 };
 
 test("accepts only Baipiao community paths", () => {
@@ -395,6 +415,9 @@ test("collects the signed-in user's activities through the Flarum posts API on a
     if (url.pathname === "/bbs/api/users/191") {
       return { ok: true, json: async () => userApiDocument };
     }
+    if (url.pathname === "/bbs/api/money-rank") {
+      return { ok: true, json: async () => leaderboardApiDocument };
+    }
     assert.equal(url.pathname, "/bbs/api/users/191/money/history");
     assert.equal(url.searchParams.get("filter[user]"), "191");
     return { ok: true, json: async () => moneyApiDocument };
@@ -415,9 +438,19 @@ test("collects the signed-in user's activities through the Flarum posts API on a
     assert.equal(result.data.moneyHistory.length, 2);
     assert.equal(result.data.moneyHistory[0].balanceBefore, 13);
     assert.equal(result.data.moneyHistory[0].balanceAfter, 3);
+    assert.equal(result.data.leaderboard.total, 503);
+    assert.equal(result.data.leaderboard.top.length, 3);
+    assert.equal(result.data.leaderboard.top[0].username, "admin");
+    assert.equal(result.data.leaderboard.top[0].url, "https://baipiao.org/bbs/u/admin");
+    assert.equal(result.data.leaderboard.me.rank, 2);
     assert.deepEqual(
       requestedPaths.map((path) => new URL(path, "https://baipiao.org").pathname).sort(),
-      ["/bbs/api/posts", "/bbs/api/users/191", "/bbs/api/users/191/money/history"],
+      [
+        "/bbs/api/money-rank",
+        "/bbs/api/posts",
+        "/bbs/api/users/191",
+        "/bbs/api/users/191/money/history",
+      ],
     );
   } finally {
     global.document = originalDocument;
@@ -667,6 +700,7 @@ test("prefers fresh finance API data over already-rendered history rows", async 
     assert.equal(result.data.moneyHistory[0].id, 1234);
     assert.notEqual(result.data.moneyHistory[0].id, 999);
     assert.deepEqual(requestedPaths.sort(), [
+      "/bbs/api/money-rank",
       "/bbs/api/posts",
       "/bbs/api/users/191",
       "/bbs/api/users/191/money/history",
@@ -704,6 +738,76 @@ test("collects finance history through the money history API from any page", asy
     assert.equal(result.data[0].balanceAfter, 3);
     assert.equal(result.data[1].balanceBefore, 3);
     assert.equal(result.data[1].balanceAfter, 53);
+  } finally {
+    global.document = originalDocument;
+    global.location = originalLocation;
+    global.fetch = originalFetch;
+  }
+});
+
+test("parses the money leaderboard document into ranked rows", () => {
+  const result = parseFlarumMoneyRankDocument(leaderboardApiDocument);
+
+  assert.equal(result.total, 503);
+  assert.deepEqual(result.top, [
+    {
+      rank: 1,
+      username: "admin",
+      money: 2833,
+      url: "/bbs/u/admin",
+      isMe: false,
+    },
+    {
+      rank: 2,
+      username: "cjamrklll",
+      money: 88,
+      url: "/bbs/u/cjamrklll",
+      isMe: true,
+    },
+    {
+      rank: 3,
+      username: "xiaoyi",
+      money: 50,
+      url: "/bbs/u/xiaoyi",
+      isMe: false,
+    },
+  ]);
+  assert.deepEqual(result.me, { rank: 2, money: 88, inTop: true });
+});
+
+test("returns null for a malformed leaderboard document", () => {
+  assert.equal(parseFlarumMoneyRankDocument({ data: [] }), null);
+  assert.equal(parseFlarumMoneyRankDocument({ data: { top: "nope" } }), null);
+  assert.equal(parseFlarumMoneyRankDocument(null), null);
+});
+
+test("keeps personal stats when the leaderboard API is unavailable", async () => {
+  const originalDocument = global.document;
+  const originalLocation = global.location;
+  const originalFetch = global.fetch;
+  global.document = {
+    getElementById: () => ({ textContent: JSON.stringify(flarumPayload) }),
+    querySelector: () => null,
+    querySelectorAll: () => [],
+  };
+  global.location = { pathname: "/bbs/" };
+  global.fetch = async (path) => {
+    const url = new URL(path, "https://baipiao.org");
+    if (url.pathname === "/bbs/api/money-rank") {
+      throw new Error("leaderboard unavailable");
+    }
+    if (url.pathname === "/bbs/api/posts") return { ok: true, json: async () => ({ data: [] }) };
+    if (url.pathname === "/bbs/api/users/191") {
+      return { ok: true, json: async () => userApiDocument };
+    }
+    return { ok: true, json: async () => ({ data: [] }) };
+  };
+
+  try {
+    const result = await collectCommunityStats();
+    assert.equal(result.ok, true);
+    assert.equal(result.data.stats.money, 88);
+    assert.equal(result.data.leaderboard, null);
   } finally {
     global.document = originalDocument;
     global.location = originalLocation;

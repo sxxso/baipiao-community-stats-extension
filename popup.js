@@ -206,6 +206,94 @@
     setText("updatedAt", data && data.fetchedAt ? `更新于 ${formatRelative(data.fetchedAt)}` : "—");
   }
 
+  function renderLeaderboard(data) {
+    const section = element("leaderboardSection");
+    if (!section) return;
+    const list = element("leaderboardList");
+    const empty = element("leaderboardEmpty");
+    const meNode = element("leaderboardMe");
+    const note = element("leaderboardNote");
+    const board = data && data.leaderboard;
+    if (!board) {
+      section.hidden = true;
+      if (list) list.replaceChildren();
+      if (meNode) {
+        meNode.hidden = true;
+        meNode.replaceChildren();
+      }
+      return;
+    }
+    section.hidden = false;
+    if (note) {
+      note.textContent =
+        board.total !== null && board.total !== undefined ? `全站 ${formatCount(board.total)} 名` : "";
+    }
+    if (meNode) {
+      meNode.replaceChildren();
+      const me = board.me;
+      if (me) {
+        meNode.hidden = false;
+        const label = root.document.createElement("span");
+        label.className = "leaderboard-me__label";
+        label.textContent = "我的名次";
+        const rank = root.document.createElement("strong");
+        rank.textContent = `第 ${formatCount(me.rank)} 名`;
+        const money = root.document.createElement("span");
+        money.className = "leaderboard-me__money";
+        money.textContent = `余额 ${formatCount(me.money)} 毛`;
+        meNode.append(label, rank, money);
+        if (!me.inTop) {
+          const hint = root.document.createElement("small");
+          hint.className = "leaderboard-me__hint";
+          hint.textContent = "未进入展示榜单";
+          meNode.append(hint);
+        }
+      } else {
+        meNode.hidden = true;
+      }
+    }
+    if (!list || !empty) return;
+    list.replaceChildren();
+    const rows = Array.isArray(board.top) ? board.top : [];
+    const currentUsername = text(data && data.profile && data.profile.username).toLowerCase();
+    for (const entry of rows) {
+      if (!isSafeCommunityUrl(entry.url) || !text(entry.username)) continue;
+      const item = root.document.createElement("li");
+      item.className = "leaderboard-item";
+      const isMe =
+        entry.isMe === true ||
+        (currentUsername && text(entry.username).toLowerCase() === currentUsername);
+      if (isMe) item.classList.add("is-me");
+      const link = root.document.createElement("a");
+      link.className = "leaderboard-link";
+      link.href = entry.url;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      const rank = root.document.createElement("span");
+      rank.className = "leaderboard-rank";
+      if (entry.rank <= 3) rank.classList.add("is-top");
+      rank.textContent = entry.rank <= 3 ? `TOP ${entry.rank}` : String(entry.rank);
+      const name = root.document.createElement("span");
+      name.className = "leaderboard-name";
+      name.textContent = entry.username;
+      if (isMe) {
+        const tag = root.document.createElement("span");
+        tag.className = "leaderboard-tag";
+        tag.textContent = "我";
+        name.append(tag);
+      }
+      const money = root.document.createElement("span");
+      money.className = "leaderboard-money";
+      money.textContent = `${formatCount(entry.money)} 毛`;
+      link.append(rank, name, money);
+      item.append(link);
+      list.append(item);
+    }
+    const rendered = list.children.length > 0;
+    empty.hidden = rendered;
+    list.hidden = !rendered;
+  }
+
   function renderTrend(data) {
     const container = element("trendBars");
     const empty = element("trendEmpty");
@@ -285,6 +373,7 @@
     renderState();
     renderProfile(state.data);
     renderStats(state.data);
+    renderLeaderboard(state.data);
     renderTrend(state.data);
     renderActivities(state.data);
   }

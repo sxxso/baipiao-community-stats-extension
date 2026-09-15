@@ -43,6 +43,8 @@
   };
   const POSTS_ENDPOINT = "/bbs/api/posts";
   const POSTS_PAGE_LIMIT = 20;
+  const MONEY_RANK_ENDPOINT = "/bbs/api/money-rank";
+  const MONEY_RANK_LIMIT = 50;
   const PROFILE_ACTIVITIES_TIMEOUT_MS = 5000;
   const PROFILE_DOM_POLL_WAIT_MS = 3000;
   const PROFILE_DOM_POLL_INTERVAL_MS = 250;
@@ -480,6 +482,56 @@
     return parseFlarumUserDocument(result.body, userId);
   }
 
+  function parseFlarumMoneyRankDocument(value) {
+    const body = parseFlarumJson(value);
+    if (!body) return null;
+    const data = isObject(body.data) ? body.data : null;
+    if (!data) return null;
+    const rows = Array.isArray(data.top) ? data.top : null;
+    if (!rows) return null;
+    const top = [];
+    const seen = new Set();
+    for (const row of rows) {
+      if (!isObject(row)) continue;
+      const username = text(row.username);
+      if (!username) continue;
+      const rank = Number(row.rank);
+      const money = Number(row.money);
+      if (!Number.isFinite(rank) || !Number.isFinite(money)) continue;
+      const key = username.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      top.push({
+        rank,
+        username,
+        money,
+        url: `/bbs/u/${encodeURIComponent(username)}`,
+        isMe: row.isMe === true,
+      });
+    }
+    let me = null;
+    if (isObject(data.me)) {
+      const myRank = Number(data.me.rank);
+      const myMoney = Number(data.me.money);
+      if (Number.isFinite(myRank) && Number.isFinite(myMoney)) {
+        me = { rank: myRank, money: myMoney, inTop: data.me.inTop === true };
+      }
+    }
+    const total = Number(data.total);
+    return {
+      top: top.slice(0, MONEY_RANK_LIMIT),
+      me,
+      total: Number.isFinite(total) ? total : null,
+    };
+  }
+
+  async function fetchFlarumMoneyRank(timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    if (typeof root.fetch !== "function") return null;
+    const result = await requestJson(MONEY_RANK_ENDPOINT, timeoutMs);
+    if (!result.ok || !isObject(result.body)) return null;
+    return parseFlarumMoneyRankDocument(result.body);
+  }
+
   async function fetchFlarumMoneyHistory(sessionUserId, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
     const userId = Number(sessionUserId);
     if (!Number.isInteger(userId) || userId <= 0 || typeof root.fetch !== "function") return [];
@@ -734,7 +786,14 @@
   }
 
   function mergePayloads(...payloads) {
-    const result = { user: {}, summary: {}, activities: [], moneyHistory: [], trend: null };
+    const result = {
+      user: {},
+      summary: {},
+      activities: [],
+      moneyHistory: [],
+      trend: null,
+      leaderboard: null,
+    };
     for (const payload of payloads) {
       if (!isObject(payload)) continue;
       if (isObject(payload.user)) Object.assign(result.user, payload.user);
@@ -742,6 +801,7 @@
       if (Array.isArray(payload.activities)) result.activities.push(...payload.activities);
       if (Array.isArray(payload.moneyHistory)) result.moneyHistory.push(...payload.moneyHistory);
       if (Array.isArray(payload.trend)) result.trend = payload.trend;
+      if (isObject(payload.leaderboard)) result.leaderboard = payload.leaderboard;
     }
     return result;
   }
@@ -759,10 +819,11 @@
     const username = text(domPayload.user && domPayload.user.username);
     const sessionUserId = bootstrap ? bootstrap.sessionUserId : null;
     if (username) {
-      const [authoritativeUser, activities, apiMoneyHistory] = await Promise.all([
+      const [authoritativeUser, activities, apiMoneyHistory, apiMoneyRank] = await Promise.all([
         fetchFlarumUser(sessionUserId),
         collectLatestActivities(username, domPayload.activities),
         fetchFlarumMoneyHistory(sessionUserId),
+        fetchFlarumMoneyRank(),
       ]);
       if (authoritativeUser) {
         if (isObject(authoritativeUser.user)) {
@@ -774,6 +835,9 @@
       }
       domPayload.activities = activities;
       if (apiMoneyHistory.length) domPayload.moneyHistory = apiMoneyHistory;
+      if (apiMoneyRank && Array.isArray(apiMoneyRank.top) && apiMoneyRank.top.length) {
+        domPayload.leaderboard = apiMoneyRank;
+      }
     }
     if (username) {
       const data =
@@ -885,8 +949,10 @@
     extractFlarumMoneyHistory,
     extractUserFromPath,
     fetchFlarumMoneyHistory,
+    fetchFlarumMoneyRank,
     fetchFlarumPostsActivities,
     fetchFlarumUser,
+    parseFlarumMoneyRankDocument,
     parseFlarumUserDocument,
     installMessageListener,
     isCommunityPath,

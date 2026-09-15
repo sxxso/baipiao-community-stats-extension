@@ -45,6 +45,7 @@ test("shows balance and level while moving finance history out of the popup", ()
 
   assert.match(html, /毛余额/);
   assert.match(html, /社区等级/);
+  assert.match(html, /毛排行榜/);
   assert.doesNotMatch(html, /资金记录/);
   assert.doesNotMatch(html, /获赞|送赞/);
 });
