@@ -189,6 +189,41 @@ h2 {
   line-height: 1.45;
 }
 
+.update-banner {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-top: 12px;
+  padding: 10px 12px;
+  border: 1px solid #f3d9b8;
+  border-left: 3px solid var(--orange);
+  border-radius: 8px;
+  background: var(--orange-soft);
+}
+
+.update-banner strong {
+  font-size: 12px;
+}
+
+.update-banner p {
+  margin-top: 2px;
+  color: #7a5a34;
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.update-actions {
+  display: grid;
+  flex: 0 0 auto;
+  gap: 4px;
+  justify-items: end;
+}
+
+.update-actions .text-button {
+  color: #99571d;
+}
+
 .profile-section {
   display: flex;
   gap: 12px;

@@ -13,6 +13,7 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
   } else {
     const bridge = api.createBackground();
     bridge.installMessageListener();
+    void bridge.maybeCheckForUpdate();
   }
 })(typeof globalThis !== "undefined" ? globalThis : this, function (root, storageLib) {
   "use strict";
@@ -25,6 +26,11 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
   const TAB_READY_TIMEOUT_MS = 5000;
   const MONEY_HISTORY_WAIT_MS = 6000;
   const MONEY_HISTORY_TIMEOUT_MS = 7000;
+  const UPDATE_CHECK_URL =
+    "https://api.github.com/repos/sxxso/baipiao-community-stats-extension/releases/latest";
+  const RELEASES_PAGE_URL =
+    "https://github.com/sxxso/baipiao-community-stats-extension/releases/latest";
+  const UPDATE_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
   function text(value) {
     return typeof value === "string" ? value.trim() : value == null ? "" : String(value).trim();
@@ -82,6 +88,8 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       : storageLib && typeof storageLib.createStorage === "function"
         ? storageLib.createStorage()
         : null;
+    const autoCheckUpdates =
+      !Object.prototype.hasOwnProperty.call(environment, "chrome") && !hasInjectedStorage;
 
     if (!chromeApi || !chromeApi.tabs) {
       throw new Error("chrome tabs API unavailable");
@@ -278,6 +286,7 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
         } catch {
           // A fresh response is still useful when local cache writes are unavailable.
         }
+        if (autoCheckUpdates) void maybeCheckForUpdate();
         return {
           ok: true,
           data,
@@ -305,6 +314,127 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       }
     }
 
+    function normalizeVersion(value) {
+      return text(value).replace(/^v/i, "").trim();
+    }
+
+    function compareVersions(left, right) {
+      const a = normalizeVersion(left)
+        .split(".")
+        .map((part) => Number(part) || 0);
+      const b = normalizeVersion(right)
+        .split(".")
+        .map((part) => Number(part) || 0);
+      const length = Math.max(a.length, b.length);
+      for (let index = 0; index < length; index += 1) {
+        const diff = (a[index] || 0) - (b[index] || 0);
+        if (diff !== 0) return diff > 0 ? 1 : -1;
+      }
+      return 0;
+    }
+
+    function currentVersion() {
+      try {
+        const runtime = chromeApi.runtime;
+        const manifest =
+          runtime && typeof runtime.getManifest === "function" ? runtime.getManifest() : null;
+        return normalizeVersion(manifest && manifest.version);
+      } catch {
+        return "";
+      }
+    }
+
+    function buildUpdateStatus(info, current) {
+      const latest = info && info.latestVersion ? info.latestVersion : null;
+      const dismissed = info && info.dismissedVersion ? info.dismissedVersion : null;
+      const checkedAt = info ? Number(info.checkedAt) : null;
+      return {
+        ok: true,
+        update: {
+          available: Boolean(latest && compareVersions(latest, current) > 0 && dismissed !== latest),
+          currentVersion: current || null,
+          latestVersion: latest,
+          url: (info && info.url) || RELEASES_PAGE_URL,
+          checkedAt: Number.isFinite(checkedAt) ? checkedAt : null,
+        },
+      };
+    }
+
+    async function readUpdateInfo() {
+      try {
+        return storage && typeof storage.loadUpdateInfo === "function"
+          ? await storage.loadUpdateInfo()
+          : null;
+      } catch {
+        return null;
+      }
+    }
+
+    async function fetchLatestRelease() {
+      if (typeof root.fetch !== "function") return null;
+      try {
+        const response = await fetch(UPDATE_CHECK_URL, {
+          headers: { Accept: "application/vnd.github+json" },
+        });
+        if (!response.ok) return null;
+        const body = await response.json();
+        if (!body || typeof body !== "object") return null;
+        const latestVersion = normalizeVersion(body.tag_name);
+        if (!latestVersion) return null;
+        const url =
+          typeof body.html_url === "string" && body.html_url.startsWith("https://github.com/")
+            ? body.html_url
+            : RELEASES_PAGE_URL;
+        return { latestVersion, url };
+      } catch {
+        return null;
+      }
+    }
+
+    async function checkForUpdate({ force = false } = {}) {
+      const current = currentVersion();
+      const cached = await readUpdateInfo();
+      const lastCheck = cached ? Number(cached.checkedAt) : null;
+      const recentlyChecked =
+        Number.isFinite(lastCheck) && Date.now() - lastCheck < UPDATE_CHECK_INTERVAL_MS;
+      if (!force && recentlyChecked) {
+        return buildUpdateStatus(cached, current);
+      }
+      let info = cached || {
+        latestVersion: null,
+        url: null,
+        checkedAt: null,
+        dismissedVersion: null,
+      };
+      const release = await fetchLatestRelease();
+      if (release) {
+        info = {
+          latestVersion: release.latestVersion,
+          url: release.url,
+          dismissedVersion: info.dismissedVersion || null,
+          checkedAt: Date.now(),
+        };
+      } else {
+        info.checkedAt = Date.now();
+      }
+      if (storage && typeof storage.saveUpdateInfo === "function") {
+        try {
+          info = await storage.saveUpdateInfo(info);
+        } catch {
+          // The in-memory info is still useful when persistence is unavailable.
+        }
+      }
+      return buildUpdateStatus(info, current);
+    }
+
+    async function maybeCheckForUpdate() {
+      try {
+        await checkForUpdate({ force: false });
+      } catch {
+        // Update checks must never break stats collection.
+      }
+    }
+
     async function handleMessage(message, options = {}) {
       if (!message || typeof message.type !== "string") {
         return { ok: false, code: "invalid_message", message: "请求格式不正确" };
@@ -323,6 +453,33 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
           return { ok: true, tabId: tab && tab.id };
         } catch {
           return { ok: false, code: "open_failed", message: "无法打开社区页面" };
+        }
+      }
+      if (message.type === "GET_UPDATE_INFO") {
+        return buildUpdateStatus(await readUpdateInfo(), currentVersion());
+      }
+      if (message.type === "CHECK_UPDATE_NOW") {
+        return checkForUpdate({ force: true });
+      }
+      if (message.type === "DISMISS_UPDATE") {
+        const info = await readUpdateInfo();
+        if (info && info.latestVersion && storage && typeof storage.saveUpdateInfo === "function") {
+          try {
+            await storage.saveUpdateInfo({ ...info, dismissedVersion: info.latestVersion });
+          } catch {
+            // Dismissing a notice is best-effort.
+          }
+        }
+        return { ok: true };
+      }
+      if (message.type === "OPEN_UPDATE_PAGE") {
+        try {
+          const tab = await promiseCall(chromeApi.tabs.create.bind(chromeApi.tabs), [
+            { url: RELEASES_PAGE_URL, active: true },
+          ]);
+          return { ok: true, tabId: tab && tab.id };
+        } catch {
+          return { ok: false, code: "open_failed", message: "无法打开发布页面" };
         }
       }
       if (message.type !== "GET_STATS" && message.type !== "GET_WIDGET_STATS") {
@@ -357,6 +514,9 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
     }
 
     return {
+      checkForUpdate,
+      compareVersions,
+      currentVersion,
       findCommunityTab,
       getOrCreateCommunityTab,
       handleMessage,
@@ -364,6 +524,7 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       collectMoneyHistoryFromTab,
       collectStatsFromTab,
       installMessageListener,
+      maybeCheckForUpdate,
       requestFromContentScript,
       waitForTabReady,
     };
@@ -371,6 +532,8 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
 
   return {
     COMMUNITY_URL,
+    RELEASES_PAGE_URL,
+    UPDATE_CHECK_URL,
     createBackground,
     isAllowedCommunityUrl,
   };

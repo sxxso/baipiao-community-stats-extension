@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createStorage } = require("../lib/storage");
+const { createStorage, sanitizeUpdateInfo } = require("../lib/storage");
 
 test("cache strips credential-like and raw-response fields", async () => {
   const backend = new Map();
@@ -130,4 +130,54 @@ test("accepts only supported theme values", async () => {
   assert.equal(await storage.loadTheme(), "dark");
   await storage.saveTheme("neon");
   assert.equal(await storage.loadTheme(), "dark");
+});
+
+test("sanitizes update info and only accepts GitHub release pages", async () => {
+  assert.equal(sanitizeUpdateInfo(null), null);
+  assert.equal(sanitizeUpdateInfo({}), null);
+  assert.deepEqual(sanitizeUpdateInfo({ latestVersion: "0.2.6", url: "https://evil.example/x" }), {
+    latestVersion: "0.2.6",
+    url: null,
+    checkedAt: null,
+    dismissedVersion: null,
+  });
+  assert.deepEqual(sanitizeUpdateInfo({ checkedAt: 5, url: "https://evil.example/x" }), {
+    latestVersion: null,
+    url: null,
+    checkedAt: 5,
+    dismissedVersion: null,
+  });
+
+  const safe = sanitizeUpdateInfo({
+    latestVersion: " 0.2.6 ",
+    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    checkedAt: 123,
+    dismissedVersion: "0.2.5",
+    raw: "discard",
+  });
+  assert.deepEqual(safe, {
+    latestVersion: "0.2.6",
+    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    checkedAt: 123,
+    dismissedVersion: "0.2.5",
+  });
+});
+
+test("persists and loads update info through the storage backend", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  await storage.saveUpdateInfo({
+    latestVersion: "0.2.6",
+    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/latest",
+    checkedAt: 456,
+    dismissedVersion: null,
+  });
+  const loaded = await storage.loadUpdateInfo();
+  assert.equal(loaded.latestVersion, "0.2.6");
+  assert.equal(loaded.checkedAt, 456);
+  assert.equal(loaded.dismissedVersion, null);
 });

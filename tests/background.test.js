@@ -13,6 +13,7 @@ function makeChrome(overrides = {}) {
     },
     runtime: {
       onMessage: { addListener() {} },
+      getManifest: () => ({ version: "0.2.5" }),
       ...overrides.runtime,
     },
     scripting: {
@@ -444,4 +445,166 @@ test("serves an in-page widget request from the sender tab", async () => {
 
   assert.equal(result.ok, true);
   assert.equal(result.data.moneyHistory.length, 1);
+});
+
+test("compares release versions numerically", () => {
+  const bridge = createBackground({ chrome: makeChrome(), storage: null });
+
+  assert.equal(bridge.compareVersions("v0.2.6", "0.2.5"), 1);
+  assert.equal(bridge.compareVersions("0.2.5", "v0.2.5"), 0);
+  assert.equal(bridge.compareVersions("0.2.10", "0.2.9"), 1);
+  assert.equal(bridge.compareVersions("0.3.0", "0.10.0"), -1);
+  assert.equal(bridge.compareVersions("", "0.2.5"), -1);
+});
+
+test("detects a newer release from the GitHub update check", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({
+      tag_name: "v0.2.6",
+      html_url:
+        "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    }),
+  });
+  const bridge = createBackground({ chrome: makeChrome(), storage: null });
+
+  try {
+    const result = await bridge.checkForUpdate({ force: true });
+    assert.equal(result.ok, true);
+    assert.equal(result.update.available, true);
+    assert.equal(result.update.currentVersion, "0.2.5");
+    assert.equal(result.update.latestVersion, "0.2.6");
+    assert.equal(
+      result.update.url,
+      "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    );
+    assert.ok(result.update.checkedAt > 0);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("reports no update when the running version is current", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => ({
+    ok: true,
+    json: async () => ({ tag_name: "v0.2.5", html_url: "https://github.com/x" }),
+  });
+  const bridge = createBackground({ chrome: makeChrome(), storage: null });
+
+  try {
+    const result = await bridge.checkForUpdate({ force: true });
+    assert.equal(result.update.available, false);
+    assert.equal(result.update.latestVersion, "0.2.5");
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("keeps the previous update info when the release check fails", async () => {
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    throw new Error("offline");
+  };
+  const backend = new Map();
+  const storage = {
+    loadUpdateInfo: async () => backend.get("update") || null,
+    saveUpdateInfo: async (info) => {
+      backend.set("update", info);
+      return info;
+    },
+  };
+  const bridge = createBackground({ chrome: makeChrome(), storage });
+
+  try {
+    const first = await bridge.checkForUpdate({ force: true });
+    assert.equal(first.update.available, false);
+    assert.equal(first.update.latestVersion, null);
+    assert.ok(first.update.checkedAt > 0);
+
+    backend.set("update", {
+      latestVersion: "0.2.9",
+      url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.9",
+      checkedAt: 1,
+      dismissedVersion: null,
+    });
+    const second = await bridge.checkForUpdate({ force: true });
+    assert.equal(second.update.available, true);
+    assert.equal(second.update.latestVersion, "0.2.9");
+    assert.ok(second.update.checkedAt > 1);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("skips the network check while the cached check is fresh", async () => {
+  let fetchCount = 0;
+  const originalFetch = global.fetch;
+  global.fetch = async () => {
+    fetchCount += 1;
+    return { ok: true, json: async () => ({ tag_name: "v9.0.0" }) };
+  };
+  const storage = {
+    loadUpdateInfo: async () => ({
+      latestVersion: "0.2.5",
+      url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/latest",
+      checkedAt: Date.now(),
+      dismissedVersion: null,
+    }),
+    saveUpdateInfo: async (info) => info,
+  };
+  const bridge = createBackground({ chrome: makeChrome(), storage });
+
+  try {
+    const result = await bridge.checkForUpdate({ force: false });
+    assert.equal(fetchCount, 0);
+    assert.equal(result.update.available, false);
+  } finally {
+    global.fetch = originalFetch;
+  }
+});
+
+test("routes update info, dismissal, and release page messages", async () => {
+  const { RELEASES_PAGE_URL } = require("../background");
+  const backend = new Map();
+  const openedUrls = [];
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [],
+      create: async (options) => {
+        openedUrls.push(options.url);
+        return { id: 5 };
+      },
+      sendMessage: async () => ({ ok: true }),
+      remove: async () => undefined,
+    },
+  });
+  const storage = {
+    loadUpdateInfo: async () => backend.get("update") || null,
+    saveUpdateInfo: async (info) => {
+      backend.set("update", info);
+      return info;
+    },
+  };
+  const bridge = createBackground({ chrome, storage });
+  backend.set("update", {
+    latestVersion: "0.2.6",
+    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    checkedAt: Date.now(),
+    dismissedVersion: null,
+  });
+
+  const info = await bridge.handleMessage({ type: "GET_UPDATE_INFO" });
+  assert.equal(info.ok, true);
+  assert.equal(info.update.available, true);
+
+  const opened = await bridge.handleMessage({ type: "OPEN_UPDATE_PAGE" });
+  assert.equal(opened.ok, true);
+  assert.deepEqual(openedUrls, [RELEASES_PAGE_URL]);
+
+  await bridge.handleMessage({ type: "DISMISS_UPDATE" });
+  assert.equal(backend.get("update").dismissedVersion, "0.2.6");
+  const after = await bridge.handleMessage({ type: "GET_UPDATE_INFO" });
+  assert.equal(after.update.available, false);
 });

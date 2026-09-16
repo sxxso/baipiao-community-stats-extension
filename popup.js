@@ -27,6 +27,7 @@
     cached: false,
     error: "",
     requesting: false,
+    update: null,
   };
 
   function text(value) {
@@ -410,12 +411,50 @@
       state.status = "error";
     }
     render();
+    await refreshUpdateInfo();
+  }
+
+  function renderUpdateBanner() {
+    const banner = element("updateBanner");
+    if (!banner) return;
+    const update = state.update;
+    if (!update || !update.available || !update.latestVersion) {
+      banner.hidden = true;
+      return;
+    }
+    banner.hidden = false;
+    setText("updateVersion", update.latestVersion);
+  }
+
+  async function refreshUpdateInfo() {
+    const response = await sendMessage({ type: "GET_UPDATE_INFO" });
+    state.update = response && response.update ? response.update : null;
+    renderUpdateBanner();
+    return state.update;
+  }
+
+  async function dismissUpdate() {
+    await sendMessage({ type: "DISMISS_UPDATE" });
+    if (state.update) {
+      state.update = { ...state.update, available: false };
+    }
+    renderUpdateBanner();
+  }
+
+  async function openUpdatePage() {
+    const response = await sendMessage({ type: "OPEN_UPDATE_PAGE" });
+    if (!response || !response.ok) {
+      state.error = response && response.code ? response.code : "unknown";
+      renderState();
+    }
   }
 
   function bindEvents() {
     const refreshButton = element("refreshButton");
     const profileButton = element("openProfileButton");
     const communityButton = element("openCommunityButton");
+    const downloadButton = element("updateDownloadButton");
+    const dismissButton = element("updateDismissButton");
     if (refreshButton) refreshButton.addEventListener("click", refresh);
     if (profileButton) {
       profileButton.addEventListener("click", () => openCommunityUrl(profileButton.dataset.url));
@@ -423,6 +462,8 @@
     if (communityButton) {
       communityButton.addEventListener("click", () => openCommunityUrl(COMMUNITY_URL));
     }
+    if (downloadButton) downloadButton.addEventListener("click", () => void openUpdatePage());
+    if (dismissButton) dismissButton.addEventListener("click", () => void dismissUpdate());
   }
 
   function init() {
@@ -439,11 +480,13 @@
       state.status = "success";
       render();
     }
+    await refreshUpdateInfo();
   }
 
   return {
     COMMUNITY_URL,
     ERROR_COPY,
+    dismissUpdate,
     formatCount,
     formatDate,
     formatRelative,
@@ -451,6 +494,7 @@
     isSafeCommunityUrl,
     load,
     refresh,
+    refreshUpdateInfo,
     render,
     state,
   };

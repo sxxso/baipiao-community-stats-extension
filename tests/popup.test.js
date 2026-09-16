@@ -10,6 +10,8 @@ const {
   isSafeCommunityUrl,
   load,
   refresh,
+  refreshUpdateInfo,
+  dismissUpdate,
   state,
 } = require("../popup");
 
@@ -46,6 +48,7 @@ test("shows balance and level while moving finance history out of the popup", ()
   assert.match(html, /毛余额/);
   assert.match(html, /社区等级/);
   assert.match(html, /毛排行榜/);
+  assert.match(html, /updateBanner/);
   assert.doesNotMatch(html, /资金记录/);
   assert.doesNotMatch(html, /获赞|送赞/);
 });
@@ -93,7 +96,7 @@ test("refresh replaces cached balance with the latest background snapshot", asyn
 
   try {
     await refresh();
-    assert.deepEqual(requests, ["GET_STATS"]);
+    assert.deepEqual(requests, ["GET_STATS", "GET_UPDATE_INFO"]);
     assert.equal(state.data.stats.money, 88);
     assert.equal(state.cached, false);
     assert.equal(state.error, "");
@@ -106,6 +109,52 @@ test("refresh replaces cached balance with the latest background snapshot", asyn
     state.error = "";
     state.status = "loading";
     state.requesting = false;
+  }
+});
+
+test("shows and dismisses the update banner from background update info", async () => {
+  const originalChrome = global.chrome;
+  const originalDocument = global.document;
+  const nodes = {};
+  const makeNode = (id) => (nodes[id] = nodes[id] || { hidden: true, textContent: "" });
+  const requests = [];
+  global.document = { getElementById: (id) => makeNode(id) };
+  global.chrome = {
+    runtime: {
+      sendMessage(message, callback) {
+        requests.push(message.type);
+        if (message.type === "GET_UPDATE_INFO") {
+          callback({
+            ok: true,
+            update: {
+              available: true,
+              currentVersion: "0.2.5",
+              latestVersion: "0.2.6",
+              url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+              checkedAt: 1,
+            },
+          });
+        } else {
+          callback({ ok: true });
+        }
+      },
+    },
+  };
+  state.update = null;
+
+  try {
+    await refreshUpdateInfo();
+    assert.deepEqual(requests, ["GET_UPDATE_INFO"]);
+    assert.equal(makeNode("updateBanner").hidden, false);
+    assert.equal(makeNode("updateVersion").textContent, "0.2.6");
+
+    await dismissUpdate();
+    assert.deepEqual(requests, ["GET_UPDATE_INFO", "DISMISS_UPDATE"]);
+    assert.equal(makeNode("updateBanner").hidden, true);
+  } finally {
+    global.chrome = originalChrome;
+    global.document = originalDocument;
+    state.update = null;
   }
 });
 
@@ -136,7 +185,7 @@ test("opening the popup reads cache without refreshing remote data", async () =>
 
   try {
     await load();
-    assert.deepEqual(requests, ["GET_CACHED_STATS"]);
+    assert.deepEqual(requests, ["GET_CACHED_STATS", "GET_UPDATE_INFO"]);
     assert.equal(state.data.profile.username, "demo");
     assert.equal(state.cached, true);
     assert.equal(state.requesting, false);
