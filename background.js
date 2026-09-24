@@ -224,6 +224,26 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       return response && response.ok && Array.isArray(response.data) ? response.data : [];
     }
 
+    async function performCheckinInTab(tab, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
+      let response =
+        tab && tab.id !== undefined
+          ? await requestFromContentScript(tab.id, { type: "GET_BAIPIAO_CHECKIN" }, timeoutMs)
+          : { ok: false, code: "no_tab", message: "无法打开社区页面" };
+      if (response && response.code === "content_unavailable" && tab && tab.id !== undefined) {
+        if (await injectCollector(tab.id)) {
+          response = await requestFromContentScript(
+            tab.id,
+            { type: "GET_BAIPIAO_CHECKIN" },
+            timeoutMs,
+          );
+        }
+      }
+      if (response && response.code === "content_unavailable") {
+        response = { ok: false, code: "collector_failed", message: "暂时无法读取社区数据" };
+      }
+      return response;
+    }
+
     async function collectStatsFromTab(tab, timeoutMs = DEFAULT_REQUEST_TIMEOUT_MS) {
       let response = tab
         ? await requestFromContentScript(tab.id, { type: "GET_BAIPIAO_STATS" }, timeoutMs)
@@ -277,6 +297,20 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
           const cachedBoard = cached && cached.leaderboard;
           if (cachedBoard && Array.isArray(cachedBoard.top) && cachedBoard.top.length) {
             data = { ...data, leaderboard: cachedBoard };
+          }
+        }
+        const needsDailyCache =
+          (data.checkin === undefined || data.checkin === null) &&
+          (data.quests === undefined || data.quests === null);
+        if (needsDailyCache) {
+          const cached = await readCache();
+          if (data.checkin === undefined || data.checkin === null) {
+            const cachedCheckin = cached && cached.checkin;
+            if (cachedCheckin) data = { ...data, checkin: cachedCheckin };
+          }
+          if (data.quests === undefined || data.quests === null) {
+            const cachedQuests = cached && Array.isArray(cached.quests) ? cached.quests : null;
+            if (cachedQuests) data = { ...data, quests: cachedQuests };
           }
         }
         try {
@@ -482,6 +516,28 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
           return { ok: false, code: "open_failed", message: "无法打开发布页面" };
         }
       }
+      if (message.type === "CHECKIN") {
+        const timeoutMs = Number(options.timeoutMs) > 0 ? Number(options.timeoutMs) : DEFAULT_REQUEST_TIMEOUT_MS;
+        const tab =
+          options.senderTabId !== undefined
+            ? { id: options.senderTabId }
+            : await getOrCreateCommunityTab();
+        const response = await performCheckinInTab(tab, timeoutMs);
+        if (response && response.ok) {
+          return {
+            ok: true,
+            granted: response.granted === undefined ? null : response.granted,
+            already: response.already === true,
+            message: response.message || "签到成功",
+            status: response.status || null,
+          };
+        }
+        return {
+          ok: false,
+          code: (response && response.code) || "checkin_failed",
+          message: (response && response.message) || "签到失败，请稍后重试",
+        };
+      }
       if (message.type !== "GET_STATS" && message.type !== "GET_WIDGET_STATS") {
         return { ok: false, code: "unknown_message", message: "未知请求" };
       }
@@ -525,6 +581,7 @@ if (typeof importScripts === "function" && typeof BaipiaoStorage === "undefined"
       collectStatsFromTab,
       installMessageListener,
       maybeCheckForUpdate,
+      performCheckinInTab,
       requestFromContentScript,
       waitForTabReady,
     };

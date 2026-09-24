@@ -17,6 +17,9 @@
     loading: false,
     error: "",
     collapsed: false,
+    checkingIn: false,
+    checkinMessage: "",
+    checkinFailed: false,
   };
 
   function text(value) {
@@ -145,6 +148,37 @@
     rankEmpty.hidden = true;
     body.append(rankHeading, rankMe, ranks, rankEmpty);
 
+    const checkinHeading = createNode("div", "bp-money-widget__subhead", "每日签到");
+    checkinHeading.id = "bp-money-widget-checkin-heading";
+    const checkinStatus = createNode("div", "bp-money-widget__checkin-status");
+    checkinStatus.id = "bp-money-widget-checkin-status";
+    const checkinMeta = createNode("p", "bp-money-widget__checkin-meta");
+    checkinMeta.id = "bp-money-widget-checkin-meta";
+    const checkinActions = createNode("div", "bp-money-widget__checkin-actions");
+    checkinActions.id = "bp-money-widget-checkin-actions";
+    const checkinButton = createNode("button", "bp-money-widget__checkin-button", "一键签到");
+    checkinButton.id = "bp-money-widget-checkin-button";
+    checkinButton.type = "button";
+    checkinButton.title = "提交今日签到";
+    checkinButton.setAttribute("aria-label", "提交今日签到");
+    checkinButton.hidden = true;
+    const checkinFeedback = createNode("span", "bp-money-widget__checkin-feedback", "");
+    checkinFeedback.id = "bp-money-widget-checkin-feedback";
+    checkinFeedback.setAttribute("role", "status");
+    checkinFeedback.setAttribute("aria-live", "polite");
+    checkinFeedback.hidden = true;
+    checkinActions.append(checkinButton, checkinFeedback);
+    body.append(checkinHeading, checkinStatus, checkinMeta, checkinActions);
+
+    const questHeading = createNode("div", "bp-money-widget__subhead", "每日任务");
+    questHeading.id = "bp-money-widget-quest-heading";
+    const quests = createNode("ol", "bp-money-widget__quests");
+    quests.id = "bp-money-widget-quests";
+    const questEmpty = createNode("p", "bp-money-widget__quest-empty", "暂无任务");
+    questEmpty.id = "bp-money-widget-quest-empty";
+    questEmpty.hidden = true;
+    body.append(questHeading, quests, questEmpty);
+
     const footer = createNode("footer", "bp-money-widget__footer");
     const count = createNode("span", "", "最近 5 条");
     count.id = "bp-money-widget-count";
@@ -158,12 +192,18 @@
     rankLink.target = "_blank";
     rankLink.rel = "noreferrer";
     rankLink.href = `${COMMUNITY_URL}money`;
-    footer.append(count, historyLink, rankLink);
+    const checkinLink = createNode("a", "bp-money-widget__link", "签到 ↗");
+    checkinLink.id = "bp-money-widget-checkin-link";
+    checkinLink.target = "_blank";
+    checkinLink.rel = "noreferrer";
+    checkinLink.href = `${COMMUNITY_URL}checkin`;
+    footer.append(count, historyLink, rankLink, checkinLink);
 
     widget.append(header, body, footer);
     root.document.body.append(widget);
 
     refreshButton.addEventListener("click", () => void refresh());
+    checkinButton.addEventListener("click", () => void checkin());
     toggleButton.addEventListener("click", () => {
       state.collapsed = !state.collapsed;
       render();
@@ -262,6 +302,110 @@
     if (empty) empty.hidden = hasRows;
   }
 
+  function checkinTone(checkin) {
+    if (checkin.checked) return "done";
+    return checkin.canCheckin ? "pending" : "blocked";
+  }
+
+  function renderCheckin(checkin) {
+    const heading = root.document.getElementById("bp-money-widget-checkin-heading");
+    const status = root.document.getElementById("bp-money-widget-checkin-status");
+    const meta = root.document.getElementById("bp-money-widget-checkin-meta");
+    const actions = root.document.getElementById("bp-money-widget-checkin-actions");
+    const button = root.document.getElementById("bp-money-widget-checkin-button");
+    const feedback = root.document.getElementById("bp-money-widget-checkin-feedback");
+    if (!checkin) {
+      if (heading) heading.hidden = true;
+      if (status) {
+        status.hidden = true;
+        status.replaceChildren();
+      }
+      if (meta) {
+        meta.hidden = true;
+        meta.textContent = "";
+      }
+      if (actions) actions.hidden = true;
+      if (button) button.hidden = true;
+      if (feedback) {
+        feedback.hidden = true;
+        feedback.textContent = "";
+      }
+      return;
+    }
+    if (status) {
+      status.hidden = false;
+      status.replaceChildren();
+      const tone = checkinTone(checkin);
+      const label = createNode(
+        "span",
+        "bp-money-widget__checkin-label",
+        checkin.checked ? "今日已签" : checkin.canCheckin ? "今日可签" : "暂不可签",
+      );
+      label.dataset.tone = tone;
+      status.append(label);
+      const reward = Number(checkin.todayReward);
+      if (Number.isFinite(reward)) {
+        status.append(createNode("strong", "", `${formatNumber(reward)} 毛`));
+      }
+    }
+    const metaParts = [
+      Number.isFinite(Number(checkin.monthDays))
+        ? `本月 ${formatNumber(checkin.monthDays)} 天`
+        : "",
+      Number.isFinite(Number(checkin.monthEarned))
+        ? `共得 ${formatNumber(checkin.monthEarned)} 毛`
+        : "",
+    ].filter(Boolean);
+    if (meta) {
+      meta.textContent = text(checkin.blockedReason) || metaParts.join(" · ");
+      meta.hidden = !meta.textContent;
+    }
+    if (heading) heading.hidden = false;
+    const actionable = checkin.canCheckin && !checkin.checked;
+    if (button) {
+      button.hidden = !actionable;
+      button.disabled = state.checkingIn;
+      button.textContent = state.checkingIn ? "签到中…" : "一键签到";
+    }
+    if (actions) actions.hidden = !actionable && !state.checkinMessage;
+    if (feedback) {
+      feedback.hidden = !state.checkinMessage;
+      feedback.textContent = state.checkinMessage;
+      feedback.dataset.tone = state.checkinFailed ? "error" : "ok";
+    }
+  }
+
+  function renderQuests(quests) {
+    const heading = root.document.getElementById("bp-money-widget-quest-heading");
+    const list = root.document.getElementById("bp-money-widget-quests");
+    const empty = root.document.getElementById("bp-money-widget-quest-empty");
+    if (!Array.isArray(quests)) {
+      if (heading) heading.hidden = true;
+      if (list) {
+        list.hidden = true;
+        list.replaceChildren();
+      }
+      if (empty) empty.hidden = true;
+      return;
+    }
+    if (list) {
+      list.replaceChildren();
+      for (const quest of quests.slice(0, 4)) {
+        if (!text(quest.name)) continue;
+        const item = createNode("li", "bp-money-widget__quest");
+        if (quest.done) item.classList.add("is-done");
+        item.append(createNode("span", "bp-money-widget__quest-name", text(quest.name)));
+        const reward = quest.done ? "已完成" : text(quest.reward) || "待完成";
+        item.append(createNode("span", "bp-money-widget__quest-reward", reward));
+        list.append(item);
+      }
+    }
+    const hasRows = Boolean(list && list.children.length);
+    if (heading) heading.hidden = false;
+    if (list) list.hidden = !hasRows;
+    if (empty) empty.hidden = hasRows;
+  }
+
   function render() {
     const widget = root.document.getElementById(WIDGET_ID);
     if (!widget) return;
@@ -303,6 +447,8 @@
 
     renderRecords(records);
     renderRanks(state.data && state.data.leaderboard);
+    renderCheckin(state.data && state.data.checkin);
+    renderQuests(state.data && state.data.quests);
     if (status) {
       status.hidden = records.length > 0;
       status.textContent = state.loading
@@ -314,10 +460,42 @@
     }
   }
 
-  async function refresh() {
+  async function checkin() {
+    if (state.checkingIn) return;
+    const current = state.data && state.data.checkin;
+    if (!current || current.checked || !current.canCheckin) return;
+    state.checkingIn = true;
+    state.checkinMessage = "";
+    state.checkinFailed = false;
+    render();
+    const response = await sendMessage({ type: "CHECKIN" });
+    state.checkingIn = false;
+    if (response && response.ok) {
+      state.checkinMessage = text(response.message) || "签到成功";
+      state.checkinFailed = false;
+      if (response.status && state.data) {
+        state.data = { ...state.data, checkin: response.status };
+      }
+    } else {
+      state.checkinMessage = (response && text(response.message)) || "签到失败，请稍后重试";
+      state.checkinFailed = true;
+    }
+    render();
+    await refresh({ keepMessage: true });
+    if (state.checkinMessage) {
+      setTimeout(() => {
+        state.checkinMessage = "";
+        state.checkinFailed = false;
+        render();
+      }, 8000);
+    }
+  }
+
+  async function refresh(options = {}) {
     if (state.loading) return;
     state.loading = true;
     state.error = "";
+    if (!options.keepMessage) state.checkinMessage = "";
     render();
     const response = await sendMessage({ type: "GET_WIDGET_STATS" });
     state.loading = false;
@@ -350,12 +528,15 @@
   return {
     COLLAPSED_KEY,
     WIDGET_ID,
+    checkin,
     formatNumber,
     init,
     isHistoryPage,
     recordDelta,
     refresh,
     render,
+    renderCheckin,
+    renderQuests,
     shortTime,
     state,
   };

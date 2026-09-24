@@ -91,6 +91,33 @@
         </div>
       </section>
 
+      <section id="checkinSection" class="content-section checkin-section" aria-labelledby="checkinHeading" hidden>
+        <div class="section-heading">
+          <h2 id="checkinHeading">每日签到</h2>
+          <span id="checkinNote" class="section-note"></span>
+        </div>
+        <div id="checkinCard" class="checkin-card">
+          <div class="checkin-status">
+            <span id="checkinState" class="checkin-state"></span>
+            <strong id="checkinToday">—</strong>
+          </div>
+          <p id="checkinMeta" class="checkin-meta"></p>
+          <p id="checkinBlocked" class="checkin-blocked" hidden></p>
+        </div>
+        <button id="openCheckinButton" class="text-button checkin-link" type="button">
+          去签到页面 <span aria-hidden="true">↗</span>
+        </button>
+      </section>
+
+      <section id="questsSection" class="content-section quests-section" aria-labelledby="questsHeading" hidden>
+        <div class="section-heading">
+          <h2 id="questsHeading">每日任务</h2>
+          <span id="questsNote" class="section-note"></span>
+        </div>
+        <ol id="questsList" class="quests-list"></ol>
+        <p id="questsEmpty" class="empty-note" hidden>暂无任务数据</p>
+      </section>
+
       <section id="leaderboardSection" class="content-section leaderboard-section" aria-labelledby="leaderboardHeading" hidden>
         <div class="section-heading">
           <h2 id="leaderboardHeading">毛排行榜</h2>

@@ -295,6 +295,146 @@
     list.hidden = !rendered;
   }
 
+  function checkinCopy(checkin) {
+    const reward =
+      checkin.todayReward !== null && checkin.todayReward !== undefined
+        ? checkin.todayReward
+        : null;
+    if (checkin.checked) {
+      return {
+        tone: "done",
+        title: "今日已签到",
+        today: reward === null ? "已完成" : `+${formatCount(reward)} 毛`,
+      };
+    }
+    if (checkin.canCheckin) {
+      return {
+        tone: "pending",
+        title: "今日可签到",
+        today: reward === null ? "前往签到" : `可得 +${formatCount(reward)} 毛`,
+      };
+    }
+    return {
+      tone: "blocked",
+      title: "暂不可签到",
+      today: checkin.blockedReason || "条件未满足",
+    };
+  }
+
+  function checkinMonthLabel(checkin) {
+    const month = text(checkin.month).match(/^(\d{4})-(\d{1,2})$/);
+    return month ? `${Number(month[2])} 月` : "本月";
+  }
+
+  function checkinTierLabel(checkin) {
+    const tier = checkin.tier;
+    if (!tier || tier.amount === null || tier.amount === undefined) return "";
+    const next = checkin.nextTier;
+    if (next && next.amount !== null && next.amount !== undefined) {
+      const days = next.daysUntil !== null && next.daysUntil !== undefined ? next.daysUntil : null;
+      if (days !== null && days > 0) {
+        return `当前 +${formatCount(tier.amount)} 毛/天 · 再签 ${formatCount(days)} 天升到 +${formatCount(next.amount)} 毛/天`;
+      }
+      return `下次签到升到 +${formatCount(next.amount)} 毛/天`;
+    }
+    return `当前 +${formatCount(tier.amount)} 毛/天`;
+  }
+
+  function renderCheckin(data) {
+    const section = element("checkinSection");
+    if (!section) return;
+    const checkin = data && data.checkin;
+    if (!checkin) {
+      section.hidden = true;
+      return;
+    }
+    section.hidden = false;
+    const copy = checkinCopy(checkin);
+    const card = element("checkinCard");
+    if (card) card.dataset.tone = copy.tone;
+    const state = element("checkinState");
+    if (state) {
+      state.textContent = copy.title;
+      state.dataset.tone = copy.tone;
+    }
+    setText("checkinToday", copy.today);
+    setText(
+      "checkinMeta",
+      [
+        checkin.monthDays !== null && checkin.monthDays !== undefined
+          ? `${checkinMonthLabel(checkin)}已签 ${formatCount(checkin.monthDays)} 天`
+          : "",
+        checkin.monthEarned !== null && checkin.monthEarned !== undefined
+          ? `本月已得 ${formatCount(checkin.monthEarned)} 毛`
+          : "",
+      ]
+        .filter(Boolean)
+        .join(" · "),
+    );
+    const blocked = element("checkinBlocked");
+    if (blocked) {
+      const reason = text(checkin.blockedReason);
+      blocked.hidden = !reason;
+      blocked.textContent = reason;
+    }
+    const note = element("checkinNote");
+    if (note) note.textContent = checkinTierLabel(checkin);
+    const button = element("openCheckinButton");
+    if (button) {
+      const url = isSafeCommunityUrl(checkin.url) ? checkin.url : `${COMMUNITY_URL}checkin`;
+      button.disabled = false;
+      button.dataset.url = url;
+    }
+  }
+
+  function renderQuests(data) {
+    const section = element("questsSection");
+    if (!section) return;
+    const list = element("questsList");
+    const empty = element("questsEmpty");
+    const quests = data && Array.isArray(data.quests) ? data.quests : [];
+    if (!quests.length) {
+      section.hidden = true;
+      if (list) list.replaceChildren();
+      if (empty) empty.hidden = true;
+      return;
+    }
+    section.hidden = false;
+    const pending = quests.filter((quest) => !quest.done).length;
+    const note = element("questsNote");
+    if (note) note.textContent = `待完成 ${pending} / ${quests.length}`;
+    if (!list || !empty) return;
+    list.replaceChildren();
+    for (const quest of quests.slice(0, 8)) {
+      const item = root.document.createElement("li");
+      item.className = "quest-item";
+      if (quest.done) item.classList.add("is-done");
+      const state = root.document.createElement("span");
+      state.className = "quest-state";
+      state.textContent = quest.done ? "已完成" : quest.manual ? "待领取" : "进行中";
+      state.dataset.tone = quest.done ? "done" : quest.manual ? "claim" : "pending";
+      const copy = root.document.createElement("div");
+      copy.className = "quest-copy";
+      const name = root.document.createElement("strong");
+      name.className = "quest-name";
+      name.textContent = quest.name;
+      const meta = root.document.createElement("span");
+      meta.className = "quest-meta";
+      meta.textContent = [quest.condition, quest.done ? "" : quest.reward]
+        .filter(Boolean)
+        .join(" · ") || (quest.daily ? "每天一次" : "一次性");
+      copy.append(name, meta);
+      const reward = root.document.createElement("span");
+      reward.className = "quest-reward";
+      reward.textContent = quest.done ? "✓" : text(quest.reward) || (quest.daily ? "每日" : "");
+      item.append(state, copy, reward);
+      list.append(item);
+    }
+    const rendered = list.children.length > 0;
+    empty.hidden = rendered;
+    list.hidden = !rendered;
+  }
+
   function renderTrend(data) {
     const container = element("trendBars");
     const empty = element("trendEmpty");
@@ -374,6 +514,8 @@
     renderState();
     renderProfile(state.data);
     renderStats(state.data);
+    renderCheckin(state.data);
+    renderQuests(state.data);
     renderLeaderboard(state.data);
     renderTrend(state.data);
     renderActivities(state.data);
@@ -455,6 +597,7 @@
     const communityButton = element("openCommunityButton");
     const downloadButton = element("updateDownloadButton");
     const dismissButton = element("updateDismissButton");
+    const checkinButton = element("openCheckinButton");
     if (refreshButton) refreshButton.addEventListener("click", refresh);
     if (profileButton) {
       profileButton.addEventListener("click", () => openCommunityUrl(profileButton.dataset.url));
@@ -464,6 +607,9 @@
     }
     if (downloadButton) downloadButton.addEventListener("click", () => void openUpdatePage());
     if (dismissButton) dismissButton.addEventListener("click", () => void dismissUpdate());
+    if (checkinButton) {
+      checkinButton.addEventListener("click", () => openCommunityUrl(checkinButton.dataset.url));
+    }
   }
 
   function init() {
@@ -496,6 +642,8 @@
     refresh,
     refreshUpdateInfo,
     render,
+    renderCheckin,
+    renderQuests,
     state,
   };
 });

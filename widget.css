@@ -242,6 +242,135 @@
   white-space: nowrap;
 }
 
+.bp-money-widget__checkin-status {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  margin-top: 6px;
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: var(--bp-widget-orange-soft, #fff0df);
+  font-size: 11px;
+}
+
+.bp-money-widget__checkin-label {
+  font-weight: 800;
+}
+
+.bp-money-widget__checkin-label[data-tone="done"] {
+  color: #117d68;
+}
+
+.bp-money-widget__checkin-label[data-tone="pending"] {
+  color: var(--bp-widget-orange);
+}
+
+.bp-money-widget__checkin-label[data-tone="blocked"] {
+  color: #b04a4a;
+}
+
+.bp-money-widget__checkin-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-top: 6px;
+}
+
+.bp-money-widget__checkin-button {
+  flex: 0 0 auto;
+  padding: 5px 12px;
+  border: 1px solid #9bcbbc;
+  border-radius: 6px;
+  background: #ffffff;
+  color: #117d68;
+  cursor: pointer;
+  font: 800 11px/1.2 Inter, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+}
+
+.bp-money-widget__checkin-button:hover {
+  border-color: var(--bp-widget-mint);
+  background: var(--bp-widget-mint-soft);
+  color: var(--bp-widget-ink);
+}
+
+.bp-money-widget__checkin-button:focus-visible {
+  outline: 3px solid rgba(37, 183, 155, 0.32);
+  outline-offset: 2px;
+}
+
+.bp-money-widget__checkin-button:disabled {
+  cursor: wait;
+  opacity: 0.55;
+}
+
+.bp-money-widget__checkin-feedback {
+  min-width: 0;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.bp-money-widget__checkin-feedback[data-tone="ok"] {
+  color: #117d68;
+}
+
+.bp-money-widget__checkin-feedback[data-tone="error"] {
+  color: #b04a4a;
+}
+
+.bp-money-widget__checkin-meta {
+  margin: 4px 0 0;
+  color: var(--bp-widget-muted);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.bp-money-widget__quests {
+  display: grid;
+  gap: 0;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bp-money-widget__quest {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--bp-widget-line);
+}
+
+.bp-money-widget__quest:last-child {
+  border-bottom: 0;
+}
+
+.bp-money-widget__quest-name {
+  overflow: hidden;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bp-money-widget__quest-reward {
+  color: #117d68;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.bp-money-widget__quest.is-done .bp-money-widget__quest-name,
+.bp-money-widget__quest.is-done .bp-money-widget__quest-reward {
+  color: var(--bp-widget-muted);
+}
+
+.bp-money-widget__quest-empty {
+  margin: 8px 0 0;
+  color: var(--bp-widget-muted);
+  text-align: center;
+}
+
 .bp-money-widget__rank-empty {
   margin: 8px 0 0;
   color: var(--bp-widget-muted);
@@ -251,9 +380,10 @@
 .bp-money-widget__footer {
   display: flex;
   min-height: 38px;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 4px 10px;
   padding: 8px 12px;
   border-top: 1px solid var(--bp-widget-line);
   color: var(--bp-widget-muted);

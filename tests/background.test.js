@@ -13,7 +13,7 @@ function makeChrome(overrides = {}) {
     },
     runtime: {
       onMessage: { addListener() {} },
-      getManifest: () => ({ version: "0.2.5" }),
+      getManifest: () => ({ version: "0.2.7" }),
       ...overrides.runtime,
     },
     scripting: {
@@ -450,7 +450,7 @@ test("serves an in-page widget request from the sender tab", async () => {
 test("compares release versions numerically", () => {
   const bridge = createBackground({ chrome: makeChrome(), storage: null });
 
-  assert.equal(bridge.compareVersions("v0.2.6", "0.2.5"), 1);
+  assert.equal(bridge.compareVersions("v0.2.7", "0.2.6"), 1);
   assert.equal(bridge.compareVersions("0.2.5", "v0.2.5"), 0);
   assert.equal(bridge.compareVersions("0.2.10", "0.2.9"), 1);
   assert.equal(bridge.compareVersions("0.3.0", "0.10.0"), -1);
@@ -462,9 +462,9 @@ test("detects a newer release from the GitHub update check", async () => {
   global.fetch = async () => ({
     ok: true,
     json: async () => ({
-      tag_name: "v0.2.6",
+      tag_name: "v0.2.8",
       html_url:
-        "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+        "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.8",
     }),
   });
   const bridge = createBackground({ chrome: makeChrome(), storage: null });
@@ -473,11 +473,11 @@ test("detects a newer release from the GitHub update check", async () => {
     const result = await bridge.checkForUpdate({ force: true });
     assert.equal(result.ok, true);
     assert.equal(result.update.available, true);
-    assert.equal(result.update.currentVersion, "0.2.5");
-    assert.equal(result.update.latestVersion, "0.2.6");
+    assert.equal(result.update.currentVersion, "0.2.7");
+    assert.equal(result.update.latestVersion, "0.2.8");
     assert.equal(
       result.update.url,
-      "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+      "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.8",
     );
     assert.ok(result.update.checkedAt > 0);
   } finally {
@@ -489,14 +489,14 @@ test("reports no update when the running version is current", async () => {
   const originalFetch = global.fetch;
   global.fetch = async () => ({
     ok: true,
-    json: async () => ({ tag_name: "v0.2.5", html_url: "https://github.com/x" }),
+    json: async () => ({ tag_name: "v0.2.7", html_url: "https://github.com/x" }),
   });
   const bridge = createBackground({ chrome: makeChrome(), storage: null });
 
   try {
     const result = await bridge.checkForUpdate({ force: true });
     assert.equal(result.update.available, false);
-    assert.equal(result.update.latestVersion, "0.2.5");
+    assert.equal(result.update.latestVersion, "0.2.7");
   } finally {
     global.fetch = originalFetch;
   }
@@ -547,7 +547,7 @@ test("skips the network check while the cached check is fresh", async () => {
   };
   const storage = {
     loadUpdateInfo: async () => ({
-      latestVersion: "0.2.5",
+      latestVersion: "0.2.7",
       url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/latest",
       checkedAt: Date.now(),
       dismissedVersion: null,
@@ -589,8 +589,8 @@ test("routes update info, dismissal, and release page messages", async () => {
   };
   const bridge = createBackground({ chrome, storage });
   backend.set("update", {
-    latestVersion: "0.2.6",
-    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.6",
+    latestVersion: "0.2.8",
+    url: "https://github.com/sxxso/baipiao-community-stats-extension/releases/tag/v0.2.8",
     checkedAt: Date.now(),
     dismissedVersion: null,
   });
@@ -604,7 +604,189 @@ test("routes update info, dismissal, and release page messages", async () => {
   assert.deepEqual(openedUrls, [RELEASES_PAGE_URL]);
 
   await bridge.handleMessage({ type: "DISMISS_UPDATE" });
-  assert.equal(backend.get("update").dismissedVersion, "0.2.6");
+  assert.equal(backend.get("update").dismissedVersion, "0.2.8");
   const after = await bridge.handleMessage({ type: "GET_UPDATE_INFO" });
   assert.equal(after.update.available, false);
+});
+
+test("keeps the cached check-in and quest list when a fresh read returns none", async () => {
+  let savedSnapshot = null;
+  const cached = {
+    profile: { username: "demo" },
+    stats: { money: 88 },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    checkin: {
+      month: "2026-09",
+      checked: false,
+      canCheckin: true,
+      monthDays: 12,
+      monthEarned: 26,
+      todayReward: 3,
+      maxDaily: 3,
+      blockedReason: null,
+      tier: null,
+      nextTier: null,
+      url: "https://baipiao.org/bbs/checkin",
+    },
+    quests: [{ id: 1, name: "每日活跃", done: false, daily: true }],
+    fetchedAt: "2026-09-09T10:00:00+00:00",
+    source: "mixed",
+  };
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 88 },
+    activity: [{ type: "reply", title: "Fresh", category: null, timestamp: "2026-09-10T00:00:00Z", url: "https://baipiao.org/bbs/d/551/1" }],
+    moneyHistory: [],
+    checkin: null,
+    quests: null,
+    trend: [],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => ({ ok: true, data }),
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => cached,
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.checkin.monthDays, 12);
+  assert.equal(result.data.quests.length, 1);
+  assert.equal(savedSnapshot.checkin.monthDays, 12);
+  assert.equal(savedSnapshot.quests.length, 1);
+});
+
+test("returns fresh check-in and quest data without touching the cache", async () => {
+  let savedSnapshot = null;
+  const data = {
+    profile: { username: "demo" },
+    stats: { money: 88 },
+    activity: [{ type: "reply", title: "Fresh", category: null, timestamp: "2026-09-10T00:00:00Z", url: "https://baipiao.org/bbs/d/551/1" }],
+    moneyHistory: [],
+    trend: [],
+    checkin: {
+      month: "2026-09",
+      checked: true,
+      canCheckin: false,
+      monthDays: 13,
+      monthEarned: 28,
+      todayReward: 3,
+      maxDaily: 3,
+      blockedReason: null,
+      tier: null,
+      nextTier: null,
+      url: "https://baipiao.org/bbs/checkin",
+    },
+    quests: [
+      { id: 1, name: "每日活跃", reward: "+10 毛", condition: "发帖 1 次", done: false, daily: true, manual: false, description: "" },
+    ],
+    fetchedAt: "2026-09-10T00:00:00Z",
+    source: "api",
+  };
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async () => ({ ok: true, data }),
+    },
+  });
+  const storage = {
+    saveSnapshot: async (snapshot) => {
+      savedSnapshot = snapshot;
+      return snapshot;
+    },
+    loadSnapshot: async () => {
+      throw new Error("cache must not be read when fresh check-in data exists");
+    },
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage({ type: "GET_STATS" }, { timeoutMs: 500 });
+
+  assert.equal(result.ok, true);
+  assert.equal(result.data.checkin.checked, true);
+  assert.equal(result.data.checkin.monthDays, 13);
+  assert.equal(result.data.quests.length, 1);
+  assert.equal(result.data.quests[0].reward, "+10 毛");
+  assert.equal(savedSnapshot.checkin.monthEarned, 28);
+});
+
+test("submits a check-in from the widget tab and returns the reward", async () => {
+  const sentMessages = [];
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      create: async () => {
+        throw new Error("no new tab should be opened for a widget check-in");
+      },
+      sendMessage: async (tabId, message) => {
+        sentMessages.push({ tabId, type: message.type });
+        if (message.type === "GET_BAIPIAO_CHECKIN") {
+          return {
+            ok: true,
+            granted: 3,
+            already: false,
+            message: "签到成功，+3 毛",
+            status: { checked: true, canCheckin: false, monthDays: 13, url: "/bbs/checkin" },
+          };
+        }
+        return { ok: true, data: {} };
+      },
+      remove: async () => undefined,
+    },
+  });
+  const bridge = createBackground({ chrome, storage: null });
+
+  const result = await bridge.handleMessage(
+    { type: "CHECKIN" },
+    { senderTabId: 7, timeoutMs: 500 },
+  );
+
+  assert.equal(result.ok, true);
+  assert.equal(result.granted, 3);
+  assert.equal(result.already, false);
+  assert.equal(result.message, "签到成功，+3 毛");
+  assert.equal(result.status.checked, true);
+  assert.deepEqual(sentMessages, [{ tabId: 7, type: "GET_BAIPIAO_CHECKIN" }]);
+});
+
+test("reports a failed check-in without touching the cached snapshot", async () => {
+  const chrome = makeChrome({
+    tabs: {
+      query: async () => [{ id: 7, status: "complete", url: "https://baipiao.org/bbs/" }],
+      sendMessage: async (tabId, message) => {
+        if (message.type === "GET_BAIPIAO_CHECKIN") {
+          return { ok: false, code: "checkin_failed", message: "签到失败，请稍后重试" };
+        }
+        return { ok: true, data: {} };
+      },
+      remove: async () => undefined,
+    },
+  });
+  const storage = {
+    loadSnapshot: async () => null,
+    saveSnapshot: async (snapshot) => snapshot,
+  };
+  const bridge = createBackground({ chrome, storage });
+
+  const result = await bridge.handleMessage(
+    { type: "CHECKIN" },
+    { senderTabId: 7, timeoutMs: 500 },
+  );
+
+  assert.equal(result.ok, false);
+  assert.equal(result.code, "checkin_failed");
+  assert.equal(result.message, "签到失败，请稍后重试");
 });

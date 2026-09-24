@@ -6,6 +6,8 @@ const {
   normalizeActivity,
   normalizeMoneyHistory,
   normalizeLeaderboard,
+  normalizeCheckin,
+  normalizeQuests,
   aggregateSevenDayTrend,
   normalizePayload,
 } = require("../lib/data-adapter");
@@ -233,4 +235,91 @@ test("normalizePayload carries the leaderboard section", () => {
 
   assert.equal(result.leaderboard.top.length, 1);
   assert.equal(result.leaderboard.top[0].username, "demo");
+});
+
+test("normalizes the check-in status and its reward tiers", () => {
+  const checkin = normalizeCheckin({
+    month: "2026-09",
+    checked: false,
+    canCheckin: true,
+    monthDays: 12,
+    monthEarned: 26,
+    todayReward: 3,
+    maxDaily: 3,
+    blockedReason: "  ",
+    tier: { from: 16, to: null, amount: 3 },
+    nextTier: { from: 6, to: 15, amount: 2, daysUntil: 4 },
+  });
+
+  assert.equal(checkin.checked, false);
+  assert.equal(checkin.canCheckin, true);
+  assert.equal(checkin.todayReward, 3);
+  assert.equal(checkin.monthDays, 12);
+  assert.equal(checkin.blockedReason, null);
+  assert.deepEqual(checkin.tier, { from: 16, to: null, amount: 3 });
+  assert.deepEqual(checkin.nextTier, { from: 6, to: 15, amount: 2, daysUntil: 4 });
+  assert.equal(checkin.url, "https://baipiao.org/bbs/checkin");
+});
+
+test("keeps a blocked check-in state usable and drops an empty one", () => {
+  const blocked = normalizeCheckin({ canCheckin: false, blockedReason: "账号异常" });
+  assert.equal(blocked.canCheckin, false);
+  assert.equal(blocked.blockedReason, "账号异常");
+
+  assert.equal(normalizeCheckin(null), null);
+  assert.equal(normalizeCheckin({}), null);
+  assert.equal(normalizeCheckin({ tier: null, blockedReason: null }), null);
+  const zeroed = normalizeCheckin({ monthDays: 0, monthEarned: 0 });
+  assert.equal(zeroed.checked, false);
+  assert.equal(zeroed.todayReward, null);
+});
+
+test("only accepts check-in links inside the community", () => {
+  assert.equal(
+    normalizeCheckin({ checked: true, url: "https://evil.example/checkin" }).url,
+    "https://baipiao.org/bbs/checkin",
+  );
+});
+
+test("normalizes daily quests, dropping invalid rows and capping the list", () => {
+  const quests = [];
+  for (let id = 1; id <= 12; id += 1) {
+    quests.push({
+      id,
+      name: `任务 ${id}`,
+      description: "描述",
+      condition: "条件",
+      reward: `+${id} 毛`,
+      done: id % 2 === 0,
+      daily: id % 3 === 0,
+      manual: false,
+    });
+  }
+  quests.push({ id: 99, name: "", done: false });
+  quests.push({ id: null, name: "坏数据", done: false });
+
+  const result = normalizeQuests(quests);
+
+  assert.equal(result.length, 10);
+  assert.equal(result[0].id, 1);
+  assert.equal(result[0].done, false);
+  assert.equal(result[1].id, 3);
+  assert.equal(result[1].done, false);
+  assert.equal(result[2].id, 5);
+  assert.equal(result[1].daily, true);
+  assert.equal(result[9].done, true);
+  assert.deepEqual(normalizeQuests(null), []);
+});
+
+test("normalizePayload carries the check-in and quest sections", () => {
+  const result = normalizePayload({
+    user: { username: "demo", money: 88 },
+    checkin: { checked: true, todayReward: 3, monthDays: 5, monthEarned: 9 },
+    quests: [{ id: 1, name: "每日活跃", reward: "+10 毛", done: false }],
+  });
+
+  assert.equal(result.checkin.checked, true);
+  assert.equal(result.checkin.todayReward, 3);
+  assert.equal(result.quests.length, 1);
+  assert.equal(result.quests[0].name, "每日活跃");
 });

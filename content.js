@@ -45,6 +45,9 @@
   const POSTS_PAGE_LIMIT = 20;
   const MONEY_RANK_ENDPOINT = "/bbs/api/money-rank";
   const MONEY_RANK_LIMIT = 50;
+  const CHECKIN_ENDPOINT = "/bbs/api/bp/checkin";
+  const QUESTS_ENDPOINT = "/bbs/api/quest-infos";
+  const QUESTS_PAGE_LIMIT = 20;
   const PROFILE_ACTIVITIES_TIMEOUT_MS = 5000;
   const PROFILE_DOM_POLL_WAIT_MS = 3000;
   const PROFILE_DOM_POLL_INTERVAL_MS = 250;
@@ -532,6 +535,142 @@
     return parseFlarumMoneyRankDocument(result.body);
   }
 
+  function checkinField(source, snakeKey, camelKey, fallback = null) {
+    if (!isObject(source)) return fallback;
+    const value = source[snakeKey] !== undefined ? source[snakeKey] : source[camelKey];
+    return value === undefined ? fallback : value;
+  }
+
+  function hasCheckinField(source, snakeKey, camelKey) {
+    if (!isObject(source)) return false;
+    return source[snakeKey] !== undefined || source[camelKey] !== undefined;
+  }
+
+  function checkinNumber(source, snakeKey, camelKey, fallback = null) {
+    const value = checkinField(source, snakeKey, camelKey, null);
+    if (value === null || value === undefined || value === "") return fallback;
+    const number = Number(value);
+    return Number.isFinite(number) ? number : fallback;
+  }
+
+  function normalizeCheckinTier(value, withDays = false) {
+    if (!isObject(value)) return null;
+    const amount = Number(value.amount);
+    const from = Number(value.from);
+    const to = value.to === null || value.to === undefined ? null : Number(value.to);
+    if (!Number.isFinite(amount) && !Number.isFinite(from)) return null;
+    const tier = {
+      from: Number.isFinite(from) ? from : null,
+      to: Number.isFinite(to) ? to : null,
+      amount: Number.isFinite(amount) ? amount : null,
+    };
+    if (withDays) {
+      const days = Number(value.days_until !== undefined ? value.days_until : value.daysUntil);
+      tier.daysUntil = Number.isFinite(days) && days >= 0 ? Math.floor(days) : null;
+    }
+    return tier;
+  }
+
+  function parseFlarumCheckinDocument(value) {
+    const body = parseFlarumJson(value);
+    if (!body) return null;
+    const nested = isObject(body.data) && !Array.isArray(body.data) ? body.data : null;
+    const hasCheckinKeys = (candidate) =>
+      isObject(candidate) &&
+      (hasCheckinField(candidate, "today_checked", "todayChecked") ||
+        hasCheckinField(candidate, "can_checkin", "canCheckin") ||
+        hasCheckinField(candidate, "month_days", "monthDays"));
+    const source = [nested, body].find(hasCheckinKeys) || null;
+    if (!source) return null;
+    return {
+      month: text(firstValue(checkinField(source, "month", "month"), "")) || null,
+      checked: checkinField(source, "today_checked", "todayChecked") === true,
+      todayReward: checkinNumber(source, "today_reward", "todayReward"),
+      canCheckin: checkinField(source, "can_checkin", "canCheckin", true) !== false,
+      monthDays: checkinNumber(source, "month_days", "monthDays", 0),
+      monthEarned: checkinNumber(source, "month_earned", "monthEarned", 0),
+      maxDaily: checkinNumber(source, "max_daily", "maxDaily"),
+      tier: normalizeCheckinTier(checkinField(source, "tier", "tier")),
+      nextTier: normalizeCheckinTier(checkinField(source, "next_tier", "nextTier"), true),
+      blockedReason: text(firstValue(checkinField(source, "blocked_reason", "blockedReason"), "")) || null,
+      url: "/bbs/checkin",
+    };
+  }
+
+  function parseJsonArray(value) {
+    if (Array.isArray(value)) return value;
+    const raw = text(value);
+    if (!raw) return [];
+    try {
+      const parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return [];
+    }
+  }
+
+  function questAlterName(entries) {
+    const item = Array.isArray(entries) ? entries[0] : null;
+    return isObject(item) ? text(firstValue(item.alter_name, item.alterName, item.name)) || null : null;
+  }
+
+  function parseFlarumQuestsDocument(value) {
+    const body = parseFlarumJson(value);
+    if (!body) return null;
+    const rows = Array.isArray(body)
+      ? body
+      : Array.isArray(body.data)
+        ? body.data
+        : Array.isArray(isObject(body.data) && body.data.data)
+          ? body.data.data
+          : null;
+    if (!rows) return null;
+    const quests = [];
+    const seen = new Set();
+    for (const resource of rows) {
+      if (!isObject(resource)) continue;
+      const attrs = isObject(resource.attributes) ? resource.attributes : resource;
+      const id = Number(firstValue(attrs.id, resource.id));
+      const name = text(attrs.name);
+      if (!Number.isInteger(id) || id <= 0 || !name) continue;
+      if (attrs.hidden === true || Number(attrs.hidden) === 1) continue;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      quests.push({
+        id,
+        name,
+        description: text(attrs.description) || null,
+        condition: questAlterName(parseJsonArray(attrs.conditions)),
+        reward: questAlterName(parseJsonArray(attrs.rewards)),
+        done: attrs.done === true,
+        daily: text(firstValue(attrs.re_available, attrs.reAvailable)) !== "",
+        manual: attrs.manual === true,
+      });
+    }
+    quests.sort((left, right) => {
+      if (left.done !== right.done) return left.done ? 1 : -1;
+      return left.id - right.id;
+    });
+    return quests.slice(0, QUESTS_PAGE_LIMIT);
+  }
+
+  async function fetchFlarumCheckin(timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    if (typeof root.fetch !== "function") return null;
+    const result = await requestJson(CHECKIN_ENDPOINT, timeoutMs);
+    if (!result.ok || result.body === null || result.body === undefined) return null;
+    return parseFlarumCheckinDocument(result.body);
+  }
+
+  async function fetchFlarumQuests(timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    if (typeof root.fetch !== "function") return null;
+    const result = await requestJson(
+      `${QUESTS_ENDPOINT}?page[limit]=${QUESTS_PAGE_LIMIT}`,
+      timeoutMs,
+    );
+    if (!result.ok || result.body === null || result.body === undefined) return null;
+    return parseFlarumQuestsDocument(result.body);
+  }
+
   async function fetchFlarumMoneyHistory(sessionUserId, timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
     const userId = Number(sessionUserId);
     if (!Number.isInteger(userId) || userId <= 0 || typeof root.fetch !== "function") return [];
@@ -561,9 +700,63 @@
     return { ok: true, data };
   }
 
-  async function requestJson(path, timeoutMs = 1800) {
+  function readCsrfToken(documentRef = root.document) {
+    if (!documentRef || typeof documentRef.getElementById !== "function") return "";
+    const node = documentRef.getElementById("flarum-json-payload");
+    const payload = parseFlarumJson(node && node.textContent);
+    const session = payload && isObject(payload.session) ? payload.session : {};
+    return text(session.csrfToken) || "";
+  }
+
+  async function performCheckin(timeoutMs = PROFILE_ACTIVITIES_TIMEOUT_MS) {
+    if (typeof root.fetch !== "function") {
+      return { ok: false, code: "checkin_failed", message: "暂时无法签到" };
+    }
+    const result = await requestJson(CHECKIN_ENDPOINT, timeoutMs, {
+      method: "POST",
+      body: {},
+      withCsrf: true,
+    });
+    if (!result.ok || result.body === null || result.body === undefined) {
+      return { ok: false, code: "checkin_failed", message: "签到失败，请稍后重试" };
+    }
+    const body = isObject(result.body) ? result.body : {};
+    const status = parseFlarumCheckinDocument(body);
+    const granted = Number(body.granted);
+    const already = body.already === true;
+    const reward = Number.isFinite(granted) && granted > 0 ? granted : null;
+    if (!status && !already && reward === null) {
+      return { ok: false, code: "checkin_failed", message: "签到结果无法识别" };
+    }
+    return {
+      ok: true,
+      granted: reward,
+      already,
+      status,
+      message: already
+        ? "今天已经签过了，明天再来"
+        : reward === null
+          ? "签到成功"
+          : `签到成功，+${reward} 毛`,
+    };
+  }
+
+  async function requestJson(path, timeoutMs = 1800, options = {}) {
     if (!isCommunityPath(path)) {
       return { ok: false, status: 0, body: null };
+    }
+
+    const method = text(options.method).toUpperCase() === "POST" ? "POST" : "GET";
+    const headers = { Accept: "application/json" };
+    let body;
+    if (method === "POST") {
+      headers["X-Requested-With"] = "XMLHttpRequest";
+      body = options.body === undefined ? "{}" : JSON.stringify(options.body);
+      headers["Content-Type"] = "application/json";
+      if (options.withCsrf) {
+        const token = readCsrfToken();
+        if (token) headers["X-CSRF-Token"] = token;
+      }
     }
 
     const url = new URL(path, ORIGIN);
@@ -572,7 +765,9 @@
     try {
       const response = await fetch(`${url.pathname}${url.search}`, {
         credentials: "include",
-        headers: { Accept: "application/json" },
+        method,
+        headers,
+        body,
         signal: controller.signal,
       });
       if (!response.ok) {
@@ -793,6 +988,8 @@
       moneyHistory: [],
       trend: null,
       leaderboard: null,
+      checkin: null,
+      quests: null,
     };
     for (const payload of payloads) {
       if (!isObject(payload)) continue;
@@ -802,6 +999,8 @@
       if (Array.isArray(payload.moneyHistory)) result.moneyHistory.push(...payload.moneyHistory);
       if (Array.isArray(payload.trend)) result.trend = payload.trend;
       if (isObject(payload.leaderboard)) result.leaderboard = payload.leaderboard;
+      if (isObject(payload.checkin)) result.checkin = payload.checkin;
+      if (Array.isArray(payload.quests)) result.quests = payload.quests;
     }
     return result;
   }
@@ -819,12 +1018,15 @@
     const username = text(domPayload.user && domPayload.user.username);
     const sessionUserId = bootstrap ? bootstrap.sessionUserId : null;
     if (username) {
-      const [authoritativeUser, activities, apiMoneyHistory, apiMoneyRank] = await Promise.all([
-        fetchFlarumUser(sessionUserId),
-        collectLatestActivities(username, domPayload.activities),
-        fetchFlarumMoneyHistory(sessionUserId),
-        fetchFlarumMoneyRank(),
-      ]);
+      const [authoritativeUser, activities, apiMoneyHistory, apiMoneyRank, apiCheckin, apiQuests] =
+        await Promise.all([
+          fetchFlarumUser(sessionUserId),
+          collectLatestActivities(username, domPayload.activities),
+          fetchFlarumMoneyHistory(sessionUserId),
+          fetchFlarumMoneyRank(),
+          fetchFlarumCheckin(),
+          fetchFlarumQuests(),
+        ]);
       if (authoritativeUser) {
         if (isObject(authoritativeUser.user)) {
           domPayload.user = { ...domPayload.user, ...authoritativeUser.user };
@@ -838,6 +1040,8 @@
       if (apiMoneyRank && Array.isArray(apiMoneyRank.top) && apiMoneyRank.top.length) {
         domPayload.leaderboard = apiMoneyRank;
       }
+      if (isObject(apiCheckin)) domPayload.checkin = apiCheckin;
+      if (apiQuests !== null) domPayload.quests = apiQuests;
     }
     if (username) {
       const data =
@@ -925,6 +1129,14 @@
           .catch(() => sendResponse({ ok: false, data: [] }));
         return true;
       }
+      if (message && message.type === "GET_BAIPIAO_CHECKIN") {
+        performCheckin()
+          .then(sendResponse)
+          .catch(() =>
+            sendResponse({ ok: false, code: "checkin_failed", message: "签到失败，请稍后重试" }),
+          );
+        return true;
+      }
       if (!message || message.type !== "GET_BAIPIAO_STATS") return undefined;
       collectCommunityStats()
         .then(sendResponse)
@@ -941,6 +1153,8 @@
 
   return {
     ENDPOINTS,
+    CHECKIN_ENDPOINT,
+    QUESTS_ENDPOINT,
     collectCommunityStats,
     collectLatestActivities,
     collectMoneyHistory,
@@ -948,11 +1162,15 @@
     extractFlarumActivityRecords,
     extractFlarumMoneyHistory,
     extractUserFromPath,
+    fetchFlarumCheckin,
     fetchFlarumMoneyHistory,
     fetchFlarumMoneyRank,
     fetchFlarumPostsActivities,
+    fetchFlarumQuests,
     fetchFlarumUser,
+    parseFlarumCheckinDocument,
     parseFlarumMoneyRankDocument,
+    parseFlarumQuestsDocument,
     parseFlarumUserDocument,
     installMessageListener,
     isCommunityPath,
@@ -961,7 +1179,9 @@
     parseFlarumPayload,
     parseFlarumMoneyHistoryDocument,
     parseFlarumPostsDocument,
+    performCheckin,
     pollProfileActivities,
+    readCsrfToken,
     requestJson,
   };
 });

@@ -602,6 +602,151 @@ h2 {
   white-space: nowrap;
 }
 
+.checkin-card {
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--orange);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.checkin-card[data-tone="done"] {
+  border-left-color: var(--mint);
+}
+
+.checkin-card[data-tone="blocked"] {
+  border-left-color: var(--danger);
+}
+
+.checkin-status {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+
+.checkin-state {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: var(--orange-soft);
+  color: #99571d;
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.checkin-state[data-tone="done"] {
+  background: var(--mint-soft);
+  color: #117e69;
+}
+
+.checkin-state[data-tone="blocked"] {
+  background: #fbe6e6;
+  color: var(--danger);
+}
+
+.checkin-status strong {
+  font-size: 14px;
+  white-space: nowrap;
+}
+
+.checkin-meta {
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  line-height: 1.5;
+}
+
+.checkin-blocked {
+  margin-top: 5px;
+  color: var(--danger);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.checkin-link {
+  display: inline-flex;
+  margin-top: 8px;
+}
+
+.quests-list {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quest-item {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: center;
+  min-width: 0;
+  padding: 8px 0;
+  border-top: 1px solid var(--line);
+}
+
+.quest-item:first-child {
+  border-top: 0;
+}
+
+.quest-item.is-done {
+  opacity: 0.55;
+}
+
+.quest-state {
+  padding: 3px 0;
+  border-radius: 5px;
+  background: var(--mint-soft);
+  color: #117e69;
+  font-size: 9px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.quest-state[data-tone="pending"] {
+  background: var(--orange-soft);
+  color: #99571d;
+}
+
+.quest-state[data-tone="claim"] {
+  background: #e8eefc;
+  color: #36528f;
+}
+
+.quest-copy {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.quest-name {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quest-meta {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.quest-reward {
+  color: var(--mint);
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.quest-item.is-done .quest-reward {
+  color: var(--muted);
+}
+
 .footer {
   gap: 12px;
   padding-top: 14px;

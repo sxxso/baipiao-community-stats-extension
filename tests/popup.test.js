@@ -12,8 +12,49 @@ const {
   refresh,
   refreshUpdateInfo,
   dismissUpdate,
+  renderCheckin,
+  renderQuests,
   state,
 } = require("../popup");
+
+function makeElement() {
+  const node = {
+    children: [],
+    dataset: {},
+    style: {},
+    hidden: false,
+    textContent: "",
+    className: "",
+    classList: {
+      add() {},
+      toggle() {},
+      contains: () => false,
+    },
+    append(...kids) {
+      node.children.push(...kids);
+    },
+    appendChild(kid) {
+      node.children.push(kid);
+    },
+    replaceChildren() {
+      node.children.length = 0;
+    },
+    setAttribute() {},
+    getAttribute: () => null,
+  };
+  return node;
+}
+
+function makeDocument() {
+  const nodes = new Map();
+  return {
+    getElementById: (id) => {
+      if (!nodes.has(id)) nodes.set(id, makeElement());
+      return nodes.get(id);
+    },
+    createElement: () => makeElement(),
+  };
+}
 
 test("formats counts without inventing unavailable values", () => {
   assert.equal(formatCount(null), "—");
@@ -49,6 +90,10 @@ test("shows balance and level while moving finance history out of the popup", ()
   assert.match(html, /社区等级/);
   assert.match(html, /毛排行榜/);
   assert.match(html, /updateBanner/);
+  assert.match(html, /每日签到/);
+  assert.match(html, /每日任务/);
+  assert.match(html, /checkinSection/);
+  assert.match(html, /questsSection/);
   assert.doesNotMatch(html, /资金记录/);
   assert.doesNotMatch(html, /获赞|送赞/);
 });
@@ -196,5 +241,120 @@ test("opening the popup reads cache without refreshing remote data", async () =>
     state.error = "";
     state.status = "loading";
     state.requesting = false;
+  }
+});
+
+test("renders the check-in card for today, the month total, and the next tier", () => {
+  const originalDocument = global.document;
+  global.document = makeDocument();
+
+  try {
+    renderCheckin({
+      checkin: {
+        month: "2026-09",
+        checked: false,
+        canCheckin: true,
+        monthDays: 12,
+        monthEarned: 26,
+        todayReward: 3,
+        maxDaily: 3,
+        blockedReason: "",
+        tier: { from: 16, to: null, amount: 3 },
+        nextTier: { from: 6, to: 15, amount: 5, daysUntil: 4 },
+        url: "https://baipiao.org/bbs/checkin",
+      },
+    });
+
+    assert.equal(global.document.getElementById("checkinSection").hidden, false);
+    assert.equal(global.document.getElementById("checkinState").textContent, "今日可签到");
+    assert.equal(global.document.getElementById("checkinToday").textContent, "可得 +3 毛");
+    assert.equal(
+      global.document.getElementById("checkinMeta").textContent,
+      "9 月已签 12 天 · 本月已得 26 毛",
+    );
+    assert.equal(
+      global.document.getElementById("checkinNote").textContent,
+      "当前 +3 毛/天 · 再签 4 天升到 +5 毛/天",
+    );
+    assert.equal(global.document.getElementById("checkinBlocked").hidden, true);
+    assert.equal(
+      global.document.getElementById("openCheckinButton").dataset.url,
+      "https://baipiao.org/bbs/checkin",
+    );
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test("reports an already completed check-in and a blocked reason", () => {
+  const originalDocument = global.document;
+  global.document = makeDocument();
+
+  try {
+    renderCheckin({
+      checkin: {
+        month: "2026-09",
+        checked: true,
+        canCheckin: false,
+        monthDays: 5,
+        monthEarned: 9,
+        todayReward: 2,
+        blockedReason: "今天已经签过了，明天再来",
+      },
+    });
+
+    assert.equal(global.document.getElementById("checkinState").textContent, "今日已签到");
+    assert.equal(global.document.getElementById("checkinToday").textContent, "+2 毛");
+    assert.equal(global.document.getElementById("checkinBlocked").hidden, false);
+    assert.equal(
+      global.document.getElementById("checkinBlocked").textContent,
+      "今天已经签过了，明天再来",
+    );
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test("hides the check-in section when the site reports none", () => {
+  const originalDocument = global.document;
+  global.document = makeDocument();
+
+  try {
+    renderCheckin({ checkin: null });
+    assert.equal(global.document.getElementById("checkinSection").hidden, true);
+  } finally {
+    global.document = originalDocument;
+  }
+});
+
+test("renders unfinished daily quests first and hides the section when empty", () => {
+  const originalDocument = global.document;
+  global.document = makeDocument();
+
+  try {
+    renderQuests({
+      quests: [
+        { id: 1, name: "每日活跃", condition: "今天发布主题或回帖 1 次", reward: "+10 毛", done: false, daily: true, manual: false },
+        { id: 2, name: "每日发主题", condition: "今天发布新主题 1 个", reward: "+10 毛", done: false, daily: true, manual: false },
+        { id: 3, name: "首次发言见面礼", condition: "累计发布主题或回帖 1 次", reward: "+50 毛", done: true, daily: false, manual: false },
+      ],
+    });
+
+    assert.equal(global.document.getElementById("questsSection").hidden, false);
+    assert.equal(
+      global.document.getElementById("questsNote").textContent,
+      "待完成 2 / 3",
+    );
+    const list = global.document.getElementById("questsList");
+    assert.equal(list.children.length, 3);
+    assert.equal(list.children[0].children[1].children[0].textContent, "每日活跃");
+    assert.equal(list.children[2].children[0].textContent, "已完成");
+    assert.equal(global.document.getElementById("questsEmpty").hidden, true);
+
+    renderQuests({ quests: [] });
+    assert.equal(global.document.getElementById("questsSection").hidden, true);
+    assert.equal(global.document.getElementById("questsList").children.length, 0);
+  } finally {
+    global.document = originalDocument;
   }
 });

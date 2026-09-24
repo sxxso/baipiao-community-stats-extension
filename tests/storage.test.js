@@ -1,6 +1,6 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { createStorage, sanitizeUpdateInfo } = require("../lib/storage");
+const { createStorage, sanitizeUpdateInfo, sanitizeCheckin, sanitizeQuests } = require("../lib/storage");
 
 test("cache strips credential-like and raw-response fields", async () => {
   const backend = new Map();
@@ -180,4 +180,97 @@ test("persists and loads update info through the storage backend", async () => {
   assert.equal(loaded.latestVersion, "0.2.6");
   assert.equal(loaded.checkedAt, 456);
   assert.equal(loaded.dismissedVersion, null);
+});
+
+test("caches only the public check-in and quest fields", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  const saved = await storage.saveSnapshot({
+    profile: { username: "demo" },
+    stats: { money: 88 },
+    activity: [],
+    moneyHistory: [],
+    trend: [],
+    checkin: {
+      month: "2026-09",
+      checked: false,
+      canCheckin: true,
+      monthDays: 12,
+      monthEarned: 26,
+      todayReward: 3,
+      maxDaily: 3,
+      blockedReason: "账号异常",
+      tier: { from: 16, to: null, amount: 3 },
+      nextTier: { from: 6, to: 15, amount: 2, daysUntil: 4 },
+      url: "https://baipiao.org/bbs/checkin",
+      extra: "discard",
+    },
+    quests: [
+      {
+        id: 1,
+        name: "每日活跃",
+        description: "今天发布主题或回帖，额外领 10 毛，每天一次。",
+        condition: "今天发布主题或回帖 1 次",
+        reward: "+10 毛",
+        done: false,
+        daily: true,
+        manual: false,
+      },
+      { id: 2, name: "", done: true },
+      { id: 1, name: "重复任务", done: true },
+    ],
+  });
+
+  assert.equal(saved.checkin.month, "2026-09");
+  assert.equal(saved.checkin.monthDays, 12);
+  assert.equal(saved.checkin.blockedReason, "账号异常");
+  assert.deepEqual(saved.checkin.tier, { from: 16, to: null, amount: 3 });
+  assert.deepEqual(saved.checkin.nextTier, { from: 6, to: 15, amount: 2, daysUntil: 4 });
+  assert.equal(saved.checkin.extra, undefined);
+  assert.equal(saved.checkin.url, "https://baipiao.org/bbs/checkin");
+  assert.equal(saved.quests.length, 1);
+  assert.equal(saved.quests[0].name, "每日活跃");
+  assert.equal(saved.quests[0].reward, "+10 毛");
+  assert.equal(saved.quests[0].done, false);
+});
+
+test("drops an unusable check-in block from the cached snapshot", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  const saved = await storage.saveSnapshot({
+    profile: { username: "demo" },
+    checkin: { checked: false, canCheckin: true, tier: null, extra: "discard" },
+    quests: null,
+  });
+
+  assert.equal(saved.checkin, null);
+  assert.equal(saved.quests, null);
+});
+
+test("keeps an empty quest list and clears an unsafe check-in link", async () => {
+  const backend = new Map();
+  const storage = createStorage({
+    get: async (key) => backend.get(key),
+    set: async (key, value) => backend.set(key, value),
+  });
+
+  const saved = await storage.saveSnapshot({
+    profile: { username: "demo" },
+    checkin: { checked: true, url: "https://evil.example/checkin" },
+    quests: [],
+  });
+
+  assert.equal(saved.checkin.url, null);
+  assert.deepEqual(saved.quests, []);
+  const loaded = await storage.loadSnapshot();
+  assert.equal(loaded.checkin.checked, true);
+  assert.deepEqual(loaded.quests, []);
 });
